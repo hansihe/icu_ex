@@ -1,0 +1,14 @@
+[package]
+name = "icu_nif"
+version = "0.1.0"
+authors = []
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+icu = { version = "2.0.0", features = ["sync", "experimental"] }
+rustler = { version = "0.37.0", features = ["big_integer"] }
+fixed_decimal = { version = "0.7.0", features = ["ryu"] }
+writeable = "0.6.1"
