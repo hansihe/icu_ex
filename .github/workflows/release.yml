@@ -97,7 +97,7 @@ jobs:
           nif-version: ${{ matrix.nif }}
           use-cross: ${{ matrix.job.use-cross }}
           cross-version: ${{ matrix.job.cross-version || 'from-source' }}
-          project-dir: "native/icu_nif"
+          project-dir: "."
           cargo-args: ${{ matrix.job.cargo-args }}
           variant: ${{ matrix.job.variant }}
 
