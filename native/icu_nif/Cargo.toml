@@ -12,3 +12,7 @@ icu = { version = "2.0.0", features = ["sync", "experimental"] }
 rustler = { version = "0.37.0", features = ["big_integer"] }
 fixed_decimal = { version = "0.7.0", features = ["ryu"] }
 writeable = "0.6.1"
+
+[features]
+# Feature necessary for Rustler Precompiled.
+nif_version_2_15 = ["rustler/nif_version_2_15"]
