@@ -1,7 +1,7 @@
 defmodule Icu.MixProject do
   use Mix.Project
 
-  @version "0.2.0"
+  @version "0.3.0-dev"
 
   def project do
     [
@@ -25,7 +25,8 @@ defmodule Icu.MixProject do
   defp deps do
     [
       {:rustler, "~> 0.37.1", runtime: false},
-      {:rustler_precompiled, "~> 0.8"}
+      {:rustler_precompiled, "~> 0.8"},
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
   end
 
