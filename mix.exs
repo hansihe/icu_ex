@@ -31,9 +31,12 @@ defmodule Icu.MixProject do
 
   defp package do
     [
+      files: ["lib", "native", "checksum-*.exs", "mix.exs", "README.md"],
+      description: "Elixir bindings to icu4x for i18n",
       links: %{
         "GitHub" => "https://github.com/hansihe/icu_ex"
-      }
+      },
+      licenses: ["Apache-2.0"],
     ]
   end
 end
