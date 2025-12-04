@@ -10,7 +10,7 @@ by adding `icu` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:icu, "~> 0.1.0"}
+    {:icu, "~> 0.2.0"}
   ]
 end
 ```
