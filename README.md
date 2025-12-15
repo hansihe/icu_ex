@@ -1,11 +1,10 @@
 # Icu
 
-**TODO: Add description**
+`icu` exposes a variety of data and algorithms which are implemented in the `icu4x` Rust library to Elixir through a NIF.
 
 ## Installation
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `icu` to your list of dependencies in `mix.exs`:
+The package can be installed by adding `icu` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
@@ -15,6 +14,4 @@ def deps do
 end
 ```
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/icu>.
+Documentation can be found at <https://hexdocs.pm/icu>.
