@@ -26,6 +26,7 @@ defmodule Icu.MixProject do
     [
       {:rustler, "~> 0.37.1", runtime: false},
       {:rustler_precompiled, "~> 0.8"},
+      {:gettext, "< 2.0.0", optional: true, runtime: false},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
   end

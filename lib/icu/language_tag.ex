@@ -33,6 +33,10 @@ defmodule Icu.LanguageTag do
     {:ok, language_tag}
   end
 
+  def parse(_language_tag) do
+    {:error, :invalid_locale}
+  end
+
   @doc """
   Parses a locale string and raises on error.
   """
@@ -95,7 +99,10 @@ defmodule Icu.LanguageTag do
   """
   @spec maximize(t()) :: {:modified, t()} | {:unmodified, t()}
   def maximize(%__MODULE__{resource: resource}) do
-    Nif.locale_maximize(resource)
+    {marker, res} = Nif.locale_maximize(resource)
+    {marker, %__MODULE__{
+      resource: res
+    }}
   end
 
   @doc """
@@ -105,17 +112,117 @@ defmodule Icu.LanguageTag do
   """
   @spec minimize(t()) :: {:modified, t()} | {:unmodified, t()}
   def minimize(%__MODULE__{resource: resource}) do
-    Nif.locale_minimize(resource)
+    {marker, res} = Nif.locale_minimize(resource)
+    {marker, %__MODULE__{
+      resource: res
+    }}
   end
 
   @doc """
   This returns a new Locale that is the result of running the
-  ‘Remove Likely Subtags, favoring script’ algorithm from
+  'Remove Likely Subtags, favoring script' algorithm from
   https://www.unicode.org/reports/tr35/#Likely_Subtags.
   """
   @spec minimize_favor_script(t()) :: {:modified, t()} | {:unmodified, t()}
   def minimize_favor_script(%__MODULE__{resource: resource}) do
-    Nif.locale_minimize_favor_script(resource)
+    {marker, res} = Nif.locale_minimize_favor_script(resource)
+    {marker, %__MODULE__{
+      resource: res
+    }}
+  end
+
+  @typedoc "Hour cycle preference for time formatting."
+  @type hour_cycle :: :h11 | :h12 | :h23
+
+  @doc """
+  Sets the hour cycle preference on a language tag.
+
+  Returns a new language tag with the hour cycle Unicode extension (`-u-hc-`) set.
+
+  ## Hour Cycles
+
+  - `:h11` – Hour system using 0-11 (noon = 0, midnight = 0)
+  - `:h12` – Hour system using 1-12 (noon = 12, midnight = 12)
+  - `:h23` – Hour system using 0-23 (noon = 12, midnight = 0)
+
+  ## Examples
+
+      iex> {:ok, tag} = Icu.LanguageTag.parse("en-US")
+      iex> {:ok, tag_with_hc} = Icu.LanguageTag.set_hour_cycle(tag, :h23)
+      iex> Icu.LanguageTag.to_string!(tag_with_hc)
+      "en-US-u-hc-h23"
+
+  """
+  @spec set_hour_cycle(t(), hour_cycle()) :: {:ok, t()} | {:error, :invalid_options}
+  def set_hour_cycle(%__MODULE__{resource: resource}, hour_cycle)
+      when hour_cycle in [:h11, :h12, :h23] do
+    case Nif.locale_set_hour_cycle(resource, hour_cycle) do
+      {:ok, new_resource} -> {:ok, %__MODULE__{resource: new_resource}}
+      {:error, _} = error -> error
+    end
+  end
+
+  def set_hour_cycle(%__MODULE__{}, _hour_cycle) do
+    {:error, :invalid_options}
+  end
+
+  @doc """
+  Sets the hour cycle preference and raises on error.
+
+  ## Examples
+
+      iex> tag = Icu.LanguageTag.parse!("en-US")
+      iex> tag_with_hc = Icu.LanguageTag.set_hour_cycle!(tag, :h23)
+      iex> Icu.LanguageTag.to_string!(tag_with_hc)
+      "en-US-u-hc-h23"
+
+  """
+  @spec set_hour_cycle!(t(), hour_cycle()) :: t()
+  def set_hour_cycle!(%__MODULE__{} = tag, hour_cycle) do
+    case set_hour_cycle(tag, hour_cycle) do
+      {:ok, new_tag} -> new_tag
+      {:error, reason} -> raise ArgumentError, "failed to set hour cycle: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
+  Gets the hour cycle preference from a language tag.
+
+  Returns `{:ok, hour_cycle}` if the tag has an hour cycle extension set,
+  or `{:ok, nil}` if no hour cycle is specified.
+
+  ## Examples
+
+      iex> {:ok, tag} = Icu.LanguageTag.parse("en-US-u-hc-h23")
+      iex> Icu.LanguageTag.get_hour_cycle(tag)
+      {:ok, :h23}
+
+      iex> {:ok, tag} = Icu.LanguageTag.parse("en-US")
+      iex> Icu.LanguageTag.get_hour_cycle(tag)
+      {:ok, nil}
+
+  """
+  @spec get_hour_cycle(t()) :: {:ok, hour_cycle() | nil} | {:error, :invalid_resource}
+  def get_hour_cycle(%__MODULE__{resource: resource}) do
+    Nif.locale_get_hour_cycle(resource)
+  end
+
+  @doc """
+  Gets the hour cycle preference and raises on error.
+
+  ## Examples
+
+      iex> tag = Icu.LanguageTag.parse!("en-US-u-hc-h12")
+      iex> Icu.LanguageTag.get_hour_cycle!(tag)
+      :h12
+
+  """
+  @spec get_hour_cycle!(t()) :: hour_cycle() | nil
+  def get_hour_cycle!(%__MODULE__{} = tag) do
+    case get_hour_cycle(tag) do
+      {:ok, hour_cycle} -> hour_cycle
+      {:error, reason} -> raise "failed to get hour cycle: #{inspect(reason)}"
+    end
   end
 
   @doc """

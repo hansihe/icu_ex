@@ -1,5 +1,28 @@
 defmodule Icu.Temporal.Formatter do
-  @moduledoc false
+  @moduledoc """
+  Low-level formatter for temporal values.
+
+  Unlike `Icu.Temporal`, this module does not apply any defaults based on input type.
+  The formatter will format exactly the fields it is configured with. If you attempt
+  to format a temporal value that is missing required fields (e.g., formatting a `Date`
+  with a formatter configured with `time_precision`), an error will be returned.
+
+  Use this module when you need precise control over the formatter configuration,
+  or when you want to reuse a single formatter across multiple values.
+
+  For most use cases, prefer `Icu.Temporal.format/2` which automatically applies
+  sensible defaults based on the input type.
+
+  ## Examples
+
+      # Create a date-only formatter
+      {:ok, formatter} = Icu.Temporal.Formatter.new(date_fields: :ymd, length: :medium)
+      {:ok, "Jan 15, 2024"} = Icu.Temporal.Formatter.format(formatter, ~D[2024-01-15])
+
+      # Trying to format a Time with a date formatter will fail
+      {:error, _} = Icu.Temporal.Formatter.format(formatter, ~T[14:30:00])
+
+  """
 
   alias Icu.Calendar
   alias Icu.Formatter.Options

@@ -42,6 +42,8 @@ defmodule Icu.Nif do
   def locale_minimize_favor_script(_resource), do: :erlang.nif_error(:nif_not_loaded)
   def locale_fallbacks(_resource), do: :erlang.nif_error(:nif_not_loaded)
   def locale_match_gettext(_resource, _available), do: :erlang.nif_error(:nif_not_loaded)
+  def locale_set_hour_cycle(_resource, _hour_cycle), do: :erlang.nif_error(:nif_not_loaded)
+  def locale_get_hour_cycle(_resource), do: :erlang.nif_error(:nif_not_loaded)
 
   # Numbers
   def number_formatter_new(_locale_resource, _options),
@@ -87,4 +89,7 @@ defmodule Icu.Nif do
 
   def relative_time_format_to_parts(_formatter_resource, _value, _unit),
     do: :erlang.nif_error(:nif_not_loaded)
+
+  # Currency
+  def currency_fractions(_currency), do: :erlang.nif_error(:nif_not_loaded)
 end

@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
+use icu::locale::extensions::unicode::{key, value};
 use icu::locale::fallback::LocaleFallbackConfig;
 use icu::locale::{subtags::Language, LocaleExpander};
 use icu::locale::{Locale, LocaleFallbacker};
-use rustler::{Encoder, Env, NifResult, NifStruct, ResourceArc, Term};
+use rustler::{Atom, Encoder, Env, NifResult, NifStruct, ResourceArc, Term};
 
 use crate::atoms;
 
@@ -198,4 +199,57 @@ pub(crate) fn locale_match_gettext<'a>(
     }
 
     Ok((atoms::error(), atoms::no_match()).encode(env))
+}
+
+#[rustler::nif]
+pub(crate) fn locale_set_hour_cycle<'a>(
+    env: Env<'a>,
+    resource_term: Term<'a>,
+    hour_cycle: Atom,
+) -> NifResult<Term<'a>> {
+    let resource: ResourceArc<LocaleResource> = match resource_term.decode() {
+        Ok(resource) => resource,
+        Err(_) => return Ok((atoms::error(), atoms::invalid_resource()).encode(env)),
+    };
+
+    let hc_value = if hour_cycle == atoms::h11() {
+        value!("h11")
+    } else if hour_cycle == atoms::h12() {
+        value!("h12")
+    } else if hour_cycle == atoms::h23() {
+        value!("h23")
+    } else {
+        return Ok((atoms::error(), atoms::invalid_options()).encode(env));
+    };
+
+    let mut locale = resource.0.clone();
+    locale.extensions.unicode.keywords.set(key!("hc"), hc_value);
+
+    Ok((atoms::ok(), ResourceArc::new(LocaleResource(locale))).encode(env))
+}
+
+#[rustler::nif]
+pub(crate) fn locale_get_hour_cycle<'a>(
+    env: Env<'a>,
+    resource_term: Term<'a>,
+) -> NifResult<Term<'a>> {
+    let resource: ResourceArc<LocaleResource> = match resource_term.decode() {
+        Ok(resource) => resource,
+        Err(_) => return Ok((atoms::error(), atoms::invalid_resource()).encode(env)),
+    };
+
+    let hc_key = key!("hc");
+    match resource.0.extensions.unicode.keywords.get(&hc_key) {
+        Some(val) => {
+            let val_str = val.to_string();
+            let atom = match val_str.as_str() {
+                "h11" => atoms::h11(),
+                "h12" => atoms::h12(),
+                "h23" => atoms::h23(),
+                _ => return Ok((atoms::ok(), atoms::nil()).encode(env)),
+            };
+            Ok((atoms::ok(), atom).encode(env))
+        }
+        None => Ok((atoms::ok(), atoms::nil()).encode(env)),
+    }
 }

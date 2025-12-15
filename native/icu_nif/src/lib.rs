@@ -1,3 +1,4 @@
+mod currency;
 mod datetime;
 mod display_names;
 mod list;
@@ -8,6 +9,7 @@ mod atoms {
     rustler::atoms! {
         ok,
         error,
+        nil,
         invalid_locale,
         invalid_resource,
         invalid_formatter,
@@ -15,6 +17,7 @@ mod atoms {
         invalid_options,
         invalid_datetime,
         invalid_items,
+        invalid_currency,
         minimum_integer_digits,
         minimum_fraction_digits,
         maximum_fraction_digits,

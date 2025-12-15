@@ -15,6 +15,125 @@ defmodule Icu.TemporalTest do
     test "returns an error for invalid temporal input" do
       assert {:error, :invalid_temporal} = Temporal.format(%{}, date_fields: :ymd)
     end
+
+    test "works with no options using defaults" do
+      # Date should format with defaults (date_fields: :ymd, length: :medium)
+      assert {:ok, date_formatted} = Temporal.format(~D[2024-06-15], locale: "en")
+      assert date_formatted =~ "2024"
+      assert date_formatted =~ "15"
+      assert date_formatted =~ "Jun" or date_formatted =~ "6"
+
+      # Time should format with defaults (time_precision: :second)
+      assert {:ok, time_formatted} = Temporal.format(~T[14:30:45], locale: "en")
+      assert time_formatted =~ "14" or time_formatted =~ "2"
+      assert time_formatted =~ "30"
+      assert time_formatted =~ "45"
+
+      # NaiveDateTime should format with both date and time defaults
+      assert {:ok, naive_formatted} = Temporal.format(~N[2024-06-15 14:30:45], locale: "en")
+      assert naive_formatted =~ "2024"
+      assert naive_formatted =~ "15"
+      assert naive_formatted =~ "30"
+      assert naive_formatted =~ "45"
+    end
+
+    test "Date input only formats date components" do
+      date = ~D[2024-06-15]
+      assert {:ok, formatted} = Temporal.format(date, locale: "en", date_fields: :ymd)
+
+      # Should contain date components
+      assert formatted =~ "2024"
+      assert formatted =~ "15"
+      assert formatted =~ "Jun" or formatted =~ "6"
+
+      # Should not contain time components
+      refute formatted =~ ":"
+    end
+
+    test "Time input only formats time components" do
+      time = ~T[14:30:45]
+      assert {:ok, formatted} = Temporal.format(time, locale: "en", time_precision: :second)
+
+      # Should contain time components
+      assert formatted =~ "30"
+      assert formatted =~ "45"
+
+      # Should not contain date components
+      refute formatted =~ "2024"
+      refute formatted =~ "Jan" or formatted =~ "Feb" or formatted =~ "Jun"
+    end
+
+    test "NaiveDateTime input formats date and time without timezone" do
+      naive_datetime = ~N[2024-06-15 14:30:45]
+      assert {:ok, formatted} = Temporal.format(naive_datetime,
+        locale: "en",
+        date_fields: :ymd,
+        time_precision: :second
+      )
+
+      # Should contain both date and time components
+      assert formatted =~ "2024"
+      assert formatted =~ "15"
+      assert formatted =~ "30"
+      assert formatted =~ "45"
+    end
+
+    test "DateTime input formats date, time, and timezone when zone_style is provided" do
+      {:ok, datetime} = DateTime.new(~D[2024-06-15], ~T[14:30:45], "Etc/UTC")
+
+      # Without zone_style, timezone should not appear
+      assert {:ok, without_zone} = Temporal.format(datetime,
+        locale: "en",
+        date_fields: :ymd,
+        time_precision: :second
+      )
+
+      assert without_zone =~ "2024"
+      assert without_zone =~ "30"
+
+      # With zone_style, timezone should appear
+      assert {:ok, with_zone} = Temporal.format(datetime,
+        locale: "en",
+        date_fields: :ymd,
+        time_precision: :second,
+        zone_style: :localized_offset_short
+      )
+
+      assert with_zone =~ "2024"
+      assert with_zone =~ "30"
+      # Should contain some timezone indicator (GMT, UTC, +00, etc)
+      assert with_zone =~ "GMT" or with_zone =~ "UTC" or with_zone =~ "+0" or with_zone =~ "Z"
+    end
+
+    test "converting DateTime to Date formats only date" do
+      {:ok, datetime} = DateTime.new(~D[2024-06-15], ~T[14:30:45], "Etc/UTC")
+      date = DateTime.to_date(datetime)
+
+      assert {:ok, formatted} = Temporal.format(date, locale: "en", date_fields: :ymd)
+
+      # Should only have date components
+      assert formatted =~ "2024"
+      assert formatted =~ "15"
+
+      # Should not have time components
+      refute formatted =~ "30"
+      refute formatted =~ "45"
+    end
+
+    test "converting DateTime to Time formats only time" do
+      {:ok, datetime} = DateTime.new(~D[2024-06-15], ~T[14:30:45], "Etc/UTC")
+      time = DateTime.to_time(datetime)
+
+      assert {:ok, formatted} = Temporal.format(time, locale: "en", time_precision: :second)
+
+      # Should only have time components
+      assert formatted =~ "30"
+      assert formatted =~ "45"
+
+      # Should not have date components
+      refute formatted =~ "2024"
+      refute formatted =~ "Jun"
+    end
   end
 
   describe "format/3" do

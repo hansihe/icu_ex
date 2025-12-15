@@ -85,12 +85,14 @@ defmodule Icu do
     end
   end
 
-  if @has_gettext do
+  if @has_gettext? do
     def put_gettext_locale(backend) do
       known_locales = Gettext.known_locales(backend)
 
       case Icu.LanguageTag.match_gettext(get_locale(), known_locales) do
         {:ok, gettext_locale} -> Gettext.put_locale(backend, gettext_locale)
+        {:error, :no_match} ->
+          nil
       end
     end
   end
