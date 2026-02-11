@@ -272,7 +272,7 @@ fn decode_formatter_config<'a>(term: Term<'a>) -> Result<FormatterConfig, ()> {
     Ok(config)
 }
 
-fn term_to_decimal<'a>(term: Term<'a>) -> Result<FixedDecimal, ()> {
+pub(crate) fn term_to_decimal<'a>(term: Term<'a>) -> Result<FixedDecimal, ()> {
     if let Ok(value) = term.decode::<i64>() {
         return Ok(FixedDecimal::from(value));
     }
@@ -289,7 +289,56 @@ fn term_to_decimal<'a>(term: Term<'a>) -> Result<FixedDecimal, ()> {
         return FixedDecimal::try_from_f64(value, FloatPrecision::RoundTrip).map_err(|_| ());
     }
 
+    // Try decoding as %Decimal{sign: 1|-1, coef: integer, exp: integer}
+    if term.get_type() == TermType::Map {
+        return try_decode_decimal_struct(term).ok_or(());
+    }
+
     Err(())
+}
+
+/// Decode an Elixir `%Decimal{sign: sign, coef: coef, exp: exp}` struct.
+/// The number represented is `sign * coef * 10^exp`.
+fn try_decode_decimal_struct<'a>(term: Term<'a>) -> Option<FixedDecimal> {
+    let iter = MapIterator::new(term)?;
+
+    let mut sign: Option<i64> = None;
+    let mut coef_term: Option<Term<'a>> = None;
+    let mut exp_val: Option<i64> = None;
+
+    for (key_term, value_term) in iter {
+        let key: Atom = key_term.decode().ok()?;
+        if key == atoms::sign() {
+            sign = Some(value_term.decode().ok()?);
+        } else if key == atoms::coef() {
+            coef_term = Some(value_term);
+        } else if key == atoms::exp() {
+            exp_val = Some(value_term.decode().ok()?);
+        }
+    }
+
+    let sign = sign?;
+    let coef_term = coef_term?;
+    let exp = exp_val?;
+    let exp_i16 = i16::try_from(exp).ok()?;
+
+    // Decode coefficient as i64, falling back to BigInt string for large values.
+    // Atoms like :NaN / :inf will fail both decodes and return None.
+    let mut decimal = if let Ok(coef) = coef_term.decode::<i64>() {
+        FixedDecimal::from(coef)
+    } else if let Ok(coef) = coef_term.decode::<BigInt>() {
+        FixedDecimal::try_from_str(&coef.to_string()).ok()?
+    } else {
+        return None;
+    };
+
+    decimal.multiply_pow10(exp_i16);
+
+    if sign < 0 {
+        decimal.set_sign(fixed_decimal::Sign::Negative);
+    }
+
+    Some(decimal)
 }
 
 fn apply_config(decimal: &mut FixedDecimal, config: &FormatterConfig) {

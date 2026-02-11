@@ -321,6 +321,53 @@ defmodule Icu.NumberTest do
     end
   end
 
+  describe "Decimal support" do
+    test "formats a Decimal value" do
+      assert {:ok, "123.450"} = Number.format(Decimal.new("123.45"))
+    end
+
+    test "formats a negative Decimal" do
+      assert {:ok, formatted} = Number.format(Decimal.new("-42.00"))
+      assert formatted =~ "-"
+      assert formatted =~ "42"
+    end
+
+    test "formats a large Decimal (BigInt coefficient)" do
+      assert {:ok, formatted} = Number.format(Decimal.new("99999999999999999999.99"))
+      assert is_binary(formatted)
+      assert formatted =~ "99"
+    end
+
+    test "formats Decimal zero" do
+      assert {:ok, formatted} = Number.format(Decimal.new("0"))
+      assert is_binary(formatted)
+    end
+
+    test "preserves Decimal precision" do
+      assert {:ok, formatted} = Number.format(Decimal.new("42.10"), maximum_fraction_digits: nil)
+      assert formatted =~ "42.10"
+    end
+
+    test "Decimal with positive exponent" do
+      assert {:ok, formatted} = Number.format(Decimal.new("5000"))
+      assert formatted =~ "5"
+    end
+
+    test "rejects Decimal NaN" do
+      assert {:error, :invalid_number} = Number.format(Decimal.new("NaN"))
+    end
+
+    test "rejects Decimal Inf" do
+      assert {:error, :invalid_number} = Number.format(Decimal.new("Inf"))
+    end
+
+    test "format_to_parts works with Decimal" do
+      assert {:ok, parts} = Number.format_to_parts(Decimal.new("1234.56"))
+      assert is_list(parts)
+      assert length(parts) > 0
+    end
+  end
+
   describe "edge cases" do
     test "formats very large number that approaches infinity" do
       # Use a large but valid float value

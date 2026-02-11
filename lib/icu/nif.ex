@@ -92,4 +92,10 @@ defmodule Icu.Nif do
 
   # Currency
   def currency_fractions(_currency), do: :erlang.nif_error(:nif_not_loaded)
+
+  def currency_formatter_new(_locale_resource, _currency_code, _options),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def currency_format(_formatter_resource, _number),
+    do: :erlang.nif_error(:nif_not_loaded)
 end

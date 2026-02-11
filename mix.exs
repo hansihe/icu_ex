@@ -24,6 +24,7 @@ defmodule Icu.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:decimal, "~> 2.1"},
       {:rustler, "~> 0.37.1", runtime: false},
       {:rustler_precompiled, "~> 0.8"},
       {:gettext, "< 2.0.0", optional: true, runtime: false},

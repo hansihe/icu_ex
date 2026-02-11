@@ -89,10 +89,14 @@ mod atoms {
         zone_style,
         alignment,
         year_style,
+        width,
         calendar_identifier,
         modified,
         unmodified,
-        no_match
+        no_match,
+        sign,
+        coef,
+        exp
     }
 }
 
@@ -104,6 +108,7 @@ fn load(env: Env, _term: Term) -> bool {
         && datetime::load(env)
         && list::load(env)
         && display_names::load(env)
+        && currency::load(env)
 }
 
 rustler::init!("Elixir.Icu.Nif", load = load);

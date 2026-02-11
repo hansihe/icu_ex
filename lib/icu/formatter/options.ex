@@ -162,6 +162,33 @@ defmodule Icu.Formatter.Options do
     {:ok, value}
   end
 
+  # Currency
+  def normalize_option(:currency, :width, value) when value in [:short, :narrow, :long],
+    do: {:ok, value}
+
+  def normalize_option(:currency, :currency, value) when is_binary(value),
+    do: {:ok, value}
+
+  def normalize_option(:currency, :currency_digits, value) when value in [:iso, :cash],
+    do: {:ok, value}
+
+  def normalize_option(:currency, :currency_digits, value)
+      when is_integer(value) and value >= 0,
+      do: {:ok, value}
+
+  @decimal_rounding_modes [
+    :down,
+    :half_up,
+    :half_even,
+    :ceiling,
+    :floor,
+    :half_down,
+    :up
+  ]
+
+  def normalize_option(:currency, :rounding_mode, value) when value in @decimal_rounding_modes,
+    do: {:ok, value}
+
   # List
   def normalize_option(:list, :type, value) when value in [:and, :or, :unit], do: {:ok, value}
 

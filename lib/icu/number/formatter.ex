@@ -27,8 +27,8 @@ defmodule Icu.Number.Formatter do
     end
   end
 
-  @spec format(t(), number()) :: {:ok, String.t()} | {:error, Number.format_error()}
-  def format(%__MODULE__{resource: resource}, number) when is_number(number) do
+  @spec format(t(), number() | struct()) :: {:ok, String.t()} | {:error, Number.format_error()}
+  def format(%__MODULE__{resource: resource}, number) when is_number(number) or is_struct(number) do
     Nif.number_format(resource, number)
   end
 
@@ -42,9 +42,10 @@ defmodule Icu.Number.Formatter do
     end
   end
 
-  @spec format_to_parts(t(), number()) ::
+  @spec format_to_parts(t(), number() | struct()) ::
           {:ok, [map()]} | {:error, Number.format_error()}
-  def format_to_parts(%__MODULE__{resource: resource}, number) when is_number(number) do
+  def format_to_parts(%__MODULE__{resource: resource}, number)
+      when is_number(number) or is_struct(number) do
     Nif.number_format_to_parts(resource, number)
   end
 
