@@ -55,23 +55,17 @@ defmodule Icu.Experimental.Currency.FormatterTest do
     end
 
     test "formats an integer", %{fmt: fmt} do
-      assert {:ok, formatted} = Formatter.format(fmt, 42)
-      assert is_binary(formatted)
-      assert formatted =~ "$"
-      assert formatted =~ "42"
+      assert {:ok, "$42.00"} = Formatter.format(fmt, 42)
     end
 
     test "formats zero", %{fmt: fmt} do
-      assert {:ok, formatted} = Formatter.format(fmt, 0)
-      assert is_binary(formatted)
-      assert formatted =~ "$"
+      assert {:ok, "$0.00"} = Formatter.format(fmt, 0)
     end
 
     test "formats negative amounts", %{fmt: fmt} do
       assert {:ok, formatted} = Formatter.format(fmt, -100.50)
-      assert is_binary(formatted)
       assert formatted =~ "$"
-      assert formatted =~ "100"
+      assert formatted =~ "100.50"
     end
 
     test "rejects non-numeric values", %{fmt: fmt} do
@@ -108,7 +102,7 @@ defmodule Icu.Experimental.Currency.FormatterTest do
     test "formats JPY in ja-JP" do
       {:ok, fmt} = Formatter.new(locale: "ja-JP", currency: "JPY")
       assert {:ok, formatted} = Formatter.format(fmt, 1000)
-      assert is_binary(formatted)
+      assert formatted =~ "1,000"
     end
   end
 
@@ -131,12 +125,9 @@ defmodule Icu.Experimental.Currency.FormatterTest do
     test "same formatter can format multiple values" do
       {:ok, fmt} = Formatter.new(locale: "en-US", currency: "USD")
 
-      assert {:ok, r1} = Formatter.format(fmt, 100)
-      assert {:ok, r2} = Formatter.format(fmt, 200)
-      assert {:ok, r3} = Formatter.format(fmt, 300)
-
-      assert r1 != r2
-      assert r2 != r3
+      assert {:ok, "$100.00"} = Formatter.format(fmt, 100)
+      assert {:ok, "$200.00"} = Formatter.format(fmt, 200)
+      assert {:ok, "$300.00"} = Formatter.format(fmt, 300)
     end
   end
 

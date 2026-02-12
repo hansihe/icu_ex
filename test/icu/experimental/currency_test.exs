@@ -11,20 +11,17 @@ defmodule Icu.Experimental.CurrencyTest do
     end
 
     test "formats integer" do
-      assert {:ok, formatted} = Currency.format(42, currency: "USD")
-      assert formatted =~ "$"
-      assert formatted =~ "42"
+      assert {:ok, "$42.00"} = Currency.format(42, currency: "USD")
     end
 
     test "formats zero" do
-      assert {:ok, formatted} = Currency.format(0, currency: "USD")
-      assert formatted =~ "$"
+      assert {:ok, "$0.00"} = Currency.format(0, currency: "USD")
     end
 
     test "formats negative amounts" do
       assert {:ok, formatted} = Currency.format(-100.50, currency: "USD")
       assert formatted =~ "$"
-      assert formatted =~ "100"
+      assert formatted =~ "100.50"
     end
 
     test "formats EUR in de-DE" do
@@ -35,7 +32,7 @@ defmodule Icu.Experimental.CurrencyTest do
 
     test "formats JPY in ja-JP" do
       assert {:ok, formatted} = Currency.format(1000, currency: "JPY", locale: "ja-JP")
-      assert is_binary(formatted)
+      assert formatted =~ "1,000"
     end
 
     test "requires currency option" do
@@ -53,18 +50,15 @@ defmodule Icu.Experimental.CurrencyTest do
 
   describe "format/2 with width option" do
     test "short width (default)" do
-      assert {:ok, formatted} = Currency.format(42, currency: "USD")
-      assert formatted =~ "$"
+      assert {:ok, "$42.00"} = Currency.format(42, currency: "USD")
     end
 
     test "narrow width" do
-      assert {:ok, formatted} = Currency.format(42, currency: "USD", width: :narrow)
-      assert is_binary(formatted)
+      assert {:ok, "$42.00"} = Currency.format(42, currency: "USD", width: :narrow)
     end
 
     test "long width shows currency name" do
-      assert {:ok, formatted} = Currency.format(42, currency: "USD", width: :long)
-      assert formatted =~ "dollar"
+      assert {:ok, "42.00 US dollars"} = Currency.format(42, currency: "USD", width: :long)
     end
   end
 
@@ -73,8 +67,8 @@ defmodule Icu.Experimental.CurrencyTest do
       assert {:ok, "$42.00"} = Currency.format(Decimal.new("42.00"), currency: "USD")
     end
 
-    test "formats Decimal without trailing zeros when not in input" do
-      assert {:ok, "$42"} = Currency.format(Decimal.new("42"), currency: "USD")
+    test "formats Decimal with rounding to currency digits" do
+      assert {:ok, "$42.00"} = Currency.format(Decimal.new("42"), currency: "USD")
     end
 
     test "formats negative Decimal" do

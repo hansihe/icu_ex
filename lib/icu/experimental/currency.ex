@@ -101,33 +101,8 @@ defmodule Icu.Experimental.Currency do
   @spec format(number(), options_input()) ::
           {:ok, String.t()} | {:error, format_error()}
   def format(number, options) do
-    with {:ok, opts} <- Formatter.normalize_options(options) do
-      {nif_opts, rounding_opts} = Formatter.split_rounding_opts(opts)
-
-      with {:ok, number} <- maybe_round(number, nif_opts[:currency], rounding_opts),
-           {:ok, formatter} <- build_formatter(nif_opts),
-           {:ok, formatted} <- Formatter.format(formatter, number) do
-        {:ok, formatted}
-      end
-    end
-  end
-
-  defp maybe_round(number, _currency, rounding_opts) when map_size(rounding_opts) == 0,
-    do: {:ok, number}
-
-  defp maybe_round(number, currency, rounding_opts) do
-    opts = Map.put(rounding_opts, :currency, currency)
-    round(number, opts)
-  end
-
-  defp build_formatter(nif_opts) do
-    currency = Map.fetch!(nif_opts, :currency)
-    locale = Map.fetch!(nif_opts, :locale)
-    rest = nif_opts |> Map.delete(:currency) |> Map.delete(:locale)
-
-    case Icu.Nif.currency_formatter_new(locale, currency, rest) do
-      {:ok, resource} -> {:ok, %Formatter{resource: resource}}
-      {:error, _} = error -> error
+    with {:ok, formatter} <- Formatter.new(options) do
+      Formatter.format(formatter, number)
     end
   end
 
@@ -188,79 +163,13 @@ defmodule Icu.Experimental.Currency do
   """
   @spec round(number() | Decimal.t(), round_options() | round_options_list()) ::
           {:ok, Decimal.t()} | {:error, term()}
-  def round(number, options) do
-    opts = if is_list(options), do: Map.new(options), else: options
-    currency = opts[:currency]
-    digits_opt = Map.get(opts, :currency_digits, :iso)
-    mode = Map.get(opts, :rounding_mode, :half_even)
-
-    with {:ok, _} <- validate_number(number),
-         {:ok, fractions} <- currency_fractions(currency),
-         {:ok, {digits, increment}} <- resolve_digits(digits_opt, fractions) do
-      decimal = to_decimal(number)
-      {:ok, apply_rounding(decimal, digits, increment, mode)}
-    end
-  end
+  def round(number, options), do: Formatter.round(number, options)
 
   @doc """
   Like `round/2`, but raises on error. See `round/2` for details.
   """
   @spec round!(number() | Decimal.t(), round_options() | round_options_list()) :: Decimal.t()
-  def round!(number, options) do
-    case __MODULE__.round(number, options) do
-      {:ok, result} -> result
-      {:error, reason} -> raise "currency rounding failed: #{inspect(reason)}"
-    end
-  end
-
-  defp validate_number(%Decimal{coef: coef}) when coef in [:NaN, :inf],
-    do: {:error, :invalid_number}
-
-  defp validate_number(%Decimal{}), do: {:ok, :valid}
-  defp validate_number(n) when is_number(n), do: {:ok, :valid}
-  defp validate_number(_), do: {:error, :invalid_number}
-
-  defp to_decimal(%Decimal{} = d), do: d
-  defp to_decimal(n) when is_float(n), do: Decimal.from_float(n)
-  defp to_decimal(n) when is_integer(n), do: Decimal.new(n)
-
-  defp resolve_digits(:iso, %{digits: digits, rounding: rounding}),
-    do: {:ok, {digits, rounding}}
-
-  defp resolve_digits(:cash, %{cash_digits: digits, cash_rounding: rounding}),
-    do: {:ok, {digits, rounding}}
-
-  defp resolve_digits(:cash, _fractions),
-    do: {:error, :no_cash_rounding}
-
-  defp resolve_digits(n, _fractions) when is_integer(n) and n >= 0,
-    do: {:ok, {n, 0}}
-
-  defp resolve_digits(_, _),
-    do: {:error, :invalid_currency_digits}
-
-  defp apply_rounding(decimal, digits, increment, mode) when increment > 0 do
-    # e.g. CHF cash: digits=2, cash_rounding=5 → increment_d = 0.05
-    increment_d = Decimal.div(Decimal.new(increment), pow10(digits))
-
-    decimal
-    |> Decimal.div(increment_d)
-    |> Decimal.round(0, mode)
-    |> Decimal.mult(increment_d)
-    |> normalize_scale(digits)
-  end
-
-  defp apply_rounding(decimal, digits, _increment, mode) do
-    Decimal.round(decimal, digits, mode)
-  end
-
-  defp pow10(0), do: Decimal.new(1)
-  defp pow10(n), do: Decimal.new(Integer.pow(10, n))
-
-  defp normalize_scale(decimal, digits) do
-    # Ensure the result has exactly `digits` decimal places
-    Decimal.round(decimal, digits)
-  end
+  def round!(number, options), do: Formatter.round!(number, options)
 
   @doc """
   Returns currency fraction data for a given ISO 4217 currency code.
