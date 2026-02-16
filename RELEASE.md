@@ -11,6 +11,12 @@ releasing is a bit more involved than it would be otherwise.
 
 2. Begin drafting a new release.
 
+CLI:
+```
+gh release create v{version} --target main --generate-notes --draft
+```
+
+UI:
     1. Go to https://github.com/hansihe/icu_ex/releases.
     2. Click "Draft a new release".
     3. Under "Select tag", set the tag to `v{version}`, e.g. `v0.11.0`.
@@ -31,6 +37,11 @@ releasing is a bit more involved than it would be otherwise.
 4. Merge the PR.
 
 5. On the release draft page, click "Publish release".
+
+CLI:
+```
+gh release edit v{version} --draft=false
+```
 
 6. Publishing the release will kick off the "Build precompiled NIFs" GitHub
    Action. Wait for this to complete.
