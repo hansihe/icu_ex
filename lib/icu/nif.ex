@@ -9,6 +9,9 @@ defmodule Icu.Nif do
   # We want "debug" in dev and test because it's faster to compile.
   mode = if Mix.env() in [:dev, :test], do: :debug, else: :release
 
+  cwd = File.cwd!()
+  System.put_env("ICU4X_DATA_DIR", cwd <> "/data")
+
   use RustlerPrecompiled,
     otp_app: :icu,
     crate: :icu_nif,
