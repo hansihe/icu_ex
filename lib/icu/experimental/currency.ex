@@ -98,7 +98,7 @@ defmodule Icu.Experimental.Currency do
       iex> Icu.Experimental.Currency.format(12345.67, currency: "USD", width: :long)
       {:ok, "12,345.67 US dollars"}
   """
-  @spec format(number(), options_input()) ::
+  @spec format(number() | Decimal.t(), options_input()) ::
           {:ok, String.t()} | {:error, format_error()}
   def format(number, options) do
     with {:ok, formatter} <- Formatter.new(options) do
@@ -114,7 +114,7 @@ defmodule Icu.Experimental.Currency do
       iex> Icu.Experimental.Currency.format!(12345.67, currency: "USD")
       "$12,345.67"
   """
-  @spec format!(number(), options_input()) :: String.t()
+  @spec format!(number() | Decimal.t(), options_input()) :: String.t()
   def format!(number, options) do
     case format(number, options) do
       {:ok, formatted} -> formatted
