@@ -9,7 +9,7 @@ The package can be installed by adding `icu` to your list of dependencies in `mi
 ```elixir
 def deps do
   [
-    {:icu, "~> 0.4.0"}
+    {:icu, "~> 0.5.0"}
   ]
 end
 ```
