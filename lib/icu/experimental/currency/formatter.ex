@@ -58,7 +58,7 @@ defmodule Icu.Experimental.Currency.Formatter do
 
   def format(%__MODULE__{}, _other), do: {:error, :invalid_number}
 
-  @spec format!(t(), number()) :: String.t()
+  @spec format!(t(), number() | Decimal.t()) :: String.t()
   def format!(%__MODULE__{} = formatter, number) do
     case format(formatter, number) do
       {:ok, result} -> result
