@@ -6,6 +6,7 @@ use fixed_decimal::{CompactDecimal, FloatPrecision, SignDisplay};
 use icu::decimal::options::{DecimalFormatterOptions, GroupingStrategy};
 use icu::decimal::{parts, DecimalFormatter};
 use icu::experimental::compactdecimal::{CompactDecimalFormatter, CompactDecimalFormatterOptions};
+use icu::experimental::dimension::percent::formatter::PercentFormatter;
 use rustler::types::map::MapIterator;
 use rustler::types::BigInt;
 use rustler::{Atom, Encoder, Env, NifMap, NifResult, ResourceArc, Term, TermType};
@@ -21,20 +22,25 @@ pub(crate) struct NumberFormatterResource {
 
 impl rustler::Resource for NumberFormatterResource {}
 
-/// Either a plain decimal formatter or a compact (abbreviated) one.
-///
-/// The compact formatter carries the same locale/grouping configuration but is
-/// a distinct ICU4X type, so it is selected once at construction time.
+/// The ICU4X formatter selected for this resource. Each style/notation maps to a
+/// distinct ICU4X type, so the choice is made once at construction time.
 enum FormatterKind {
     Standard(DecimalFormatter),
-    // Boxed: CompactDecimalFormatter is substantially larger than DecimalFormatter.
+    // Boxed: these formatters are substantially larger than DecimalFormatter.
     Compact(Box<CompactDecimalFormatter>),
+    Percent(Box<PercentFormatter<DecimalFormatter>>),
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Notation {
     Standard,
     Compact,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Style {
+    Decimal,
+    Percent,
 }
 
 #[derive(Clone, Copy)]
@@ -54,9 +60,13 @@ struct FormatterConfig {
     minimum_integer_digits: u16,
     minimum_fraction_digits: u16,
     maximum_fraction_digits: Option<u16>,
+    // Whether the caller set maximum_fraction_digits explicitly. Percent style
+    // defaults to 0 fraction digits (Intl semantics) when it was left unset.
+    maximum_fraction_digits_set: bool,
     grouping_strategy: GroupingStrategy,
     sign_display: SignDisplay,
     notation: Notation,
+    style: Style,
     compact_display: CompactDisplay,
     rounding_mode: RoundingMode,
 }
@@ -67,9 +77,11 @@ impl Default for FormatterConfig {
             minimum_integer_digits: 1,
             minimum_fraction_digits: 0,
             maximum_fraction_digits: Some(3),
+            maximum_fraction_digits_set: false,
             grouping_strategy: GroupingStrategy::Auto,
             sign_display: SignDisplay::Auto,
             notation: Notation::Standard,
+            style: Style::Decimal,
             compact_display: CompactDisplay::Short,
             rounding_mode: RoundingMode::HalfEven,
         }
@@ -157,17 +169,29 @@ pub(crate) fn number_formatter_new<'a>(
         Err(_) => return Ok((atoms::error(), atoms::invalid_options()).encode(env)),
     };
 
+    // Percent is a distinct ICU4X formatter and has no compact variant at the
+    // pinned rev, so the two are mutually exclusive.
+    if config.style == Style::Percent && config.notation == Notation::Compact {
+        return Ok((atoms::error(), atoms::invalid_options()).encode(env));
+    }
+
     let mut formatter_options = DecimalFormatterOptions::default();
     formatter_options.grouping_strategy = Some(config.grouping_strategy);
 
-    let formatter = match config.notation {
-        Notation::Standard => {
+    let formatter = match (config.style, config.notation) {
+        (Style::Percent, _) => {
+            match PercentFormatter::try_new(locale_resource.0.clone().into(), Default::default()) {
+                Ok(formatter) => FormatterKind::Percent(Box::new(formatter)),
+                Err(_) => return Ok((atoms::error(), atoms::invalid_locale()).encode(env)),
+            }
+        }
+        (Style::Decimal, Notation::Standard) => {
             match DecimalFormatter::try_new(locale_resource.0.clone().into(), formatter_options) {
                 Ok(formatter) => FormatterKind::Standard(formatter),
                 Err(_) => return Ok((atoms::error(), atoms::invalid_locale()).encode(env)),
             }
         }
-        Notation::Compact => {
+        (Style::Decimal, Notation::Compact) => {
             let compact_options = CompactDecimalFormatterOptions::from(formatter_options);
             let prefs = locale_resource.0.clone().into();
             let result = match config.compact_display {
@@ -218,6 +242,19 @@ pub(crate) fn number_format<'a>(
                 Err(_) => Ok((atoms::error(), atoms::invalid_number()).encode(env)),
             }
         }
+        FormatterKind::Percent(formatter) => {
+            // Intl semantics: the input is a ratio, so scale by 100 (0.5 -> 50%).
+            decimal.multiply_pow10(2);
+            let mut config = formatter_resource.config.clone();
+            // Intl percent defaults to 0 fraction digits unless the caller asked
+            // for more; without this the shared decimal default (3) yields "50.000%".
+            if !config.maximum_fraction_digits_set {
+                config.maximum_fraction_digits = Some(0);
+            }
+            apply_config(&mut decimal, &config);
+            let formatted = formatter.format(&decimal).to_string();
+            Ok((atoms::ok(), formatted).encode(env))
+        }
     }
 }
 
@@ -234,7 +271,7 @@ pub(crate) fn number_format_compact<'a>(
 
     let formatter = match &formatter_resource.formatter {
         FormatterKind::Compact(formatter) => formatter,
-        FormatterKind::Standard(_) => {
+        FormatterKind::Standard(_) | FormatterKind::Percent(_) => {
             return Ok((atoms::error(), atoms::invalid_formatter()).encode(env))
         }
     };
@@ -328,7 +365,7 @@ pub(crate) fn number_format_to_parts<'a>(
     let formatter = match &formatter_resource.formatter {
         FormatterKind::Standard(formatter) => formatter,
         // Parts output is only meaningful for the plain decimal formatter.
-        FormatterKind::Compact(_) => {
+        FormatterKind::Compact(_) | FormatterKind::Percent(_) => {
             return Ok((atoms::error(), atoms::invalid_options()).encode(env))
         }
     };
@@ -390,6 +427,8 @@ fn decode_formatter_config<'a>(term: Term<'a>) -> Result<FormatterConfig, ()> {
             }
             config.minimum_fraction_digits = value as u16;
         } else if key == atoms::maximum_fraction_digits() {
+            config.maximum_fraction_digits_set = true;
+
             if value_term.get_type() == TermType::Atom {
                 if let Ok(atom_name) = value_term.atom_to_string() {
                     if atom_name == "nil" {
@@ -421,6 +460,13 @@ fn decode_formatter_config<'a>(term: Term<'a>) -> Result<FormatterConfig, ()> {
                 _ if value == atoms::never() => SignDisplay::Never,
                 _ if value == atoms::except_zero() => SignDisplay::ExceptZero,
                 _ if value == atoms::negative() => SignDisplay::Negative,
+                _ => return Err(()),
+            };
+        } else if key == atoms::style() {
+            let value: Atom = value_term.decode().map_err(|_| ())?;
+            config.style = match value {
+                _ if value == atoms::decimal() => Style::Decimal,
+                _ if value == atoms::percent() => Style::Percent,
                 _ => return Err(()),
             };
         } else if key == atoms::notation() {

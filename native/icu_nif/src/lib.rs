@@ -28,6 +28,8 @@ mod atoms {
         rounding_mode,
         trunc,
         half_even,
+        style,
+        percent,
         sign_display,
         and,
         or,

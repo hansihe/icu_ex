@@ -162,6 +162,10 @@ defmodule Icu.Formatter.Options do
     {:ok, value}
   end
 
+  def normalize_option(:number, :style, value) when value in [:decimal, :percent] do
+    {:ok, value}
+  end
+
   def normalize_option(:number, :notation, value) when value in [:standard, :compact] do
     {:ok, value}
   end

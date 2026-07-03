@@ -22,6 +22,10 @@ defmodule Icu.Number do
   - `:minimum_integer_digits` – left-pad with zeros to hit a minimum integer width.
   - `:minimum_fraction_digits` – right-pad with zeros to ensure fractional precision.
   - `:maximum_fraction_digits` – clamp or round fractional precision.
+  - `:style` – `:decimal` (default) or `:percent`. Percent follows `Intl.NumberFormat`
+    semantics: the input is a **ratio** and is multiplied by 100 (`0.5` → `"50%"`), with
+    locale-correct placement (`tr` → `"%50"`, `fr` → `"50 %"`). Cannot be combined with
+    `notation: :compact`.
   - `:notation` – `:standard` (default) or `:compact` for locale-aware abbreviations
     (`194438` → `"194K"`, Japanese/Chinese group by 万). See `format_compact/2`.
   - `:compact_display` – `:short` (default, e.g. `"194K"`) or `:long` (e.g. `"194 thousand"`),
@@ -45,6 +49,9 @@ defmodule Icu.Number do
 
   @typedoc "Controls how positive/negative signs are displayed."
   @type sign_display :: :auto | :always | :never | :except_zero | :negative
+
+  @typedoc "Selects plain decimal or percent formatting."
+  @type style :: :decimal | :percent
 
   @typedoc "Selects standard or compact (abbreviated) notation."
   @type notation :: :standard | :compact
@@ -71,6 +78,7 @@ defmodule Icu.Number do
             | {:minimum_integer_digits, pos_integer()}
             | {:minimum_fraction_digits, non_neg_integer()}
             | {:maximum_fraction_digits, non_neg_integer() | nil}
+            | {:style, style()}
             | {:notation, notation()}
             | {:compact_display, compact_display()}
             | {:rounding_mode, rounding_mode()}
@@ -85,6 +93,7 @@ defmodule Icu.Number do
             optional(:minimum_integer_digits) => pos_integer(),
             optional(:minimum_fraction_digits) => non_neg_integer(),
             optional(:maximum_fraction_digits) => non_neg_integer() | nil,
+            optional(:style) => style(),
             optional(:notation) => notation(),
             optional(:compact_display) => compact_display(),
             optional(:rounding_mode) => rounding_mode(),
@@ -110,6 +119,9 @@ defmodule Icu.Number do
 
       iex> Icu.Number.format(42, sign_display: :always)
       {:ok, "+42.000"}
+
+      iex> Icu.Number.format(0.5, style: :percent)
+      {:ok, "50%"}
   """
   @spec format(number(), options_input()) ::
           {:ok, String.t()} | {:error, format_error()}

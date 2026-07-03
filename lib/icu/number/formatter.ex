@@ -94,6 +94,7 @@ defmodule Icu.Number.Formatter do
           :minimum_fraction_digits,
           :maximum_integer_digits,
           :maximum_fraction_digits,
+          :style,
           :notation,
           :compact_display,
           :rounding_mode,
