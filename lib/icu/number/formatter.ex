@@ -28,11 +28,27 @@ defmodule Icu.Number.Formatter do
   end
 
   @spec format(t(), number() | struct()) :: {:ok, String.t()} | {:error, Number.format_error()}
-  def format(%__MODULE__{resource: resource}, number) when is_number(number) or is_struct(number) do
+  def format(%__MODULE__{resource: resource}, number)
+      when is_number(number) or is_struct(number) do
     Nif.number_format(resource, number)
   end
 
   def format(%__MODULE__{}, _other), do: {:error, :invalid_number}
+
+  @spec format_compact(t(), number() | struct()) ::
+          {:ok, Number.compact_result()} | {:error, Number.format_error()}
+  def format_compact(%__MODULE__{resource: resource}, number)
+      when is_number(number) or is_struct(number) do
+    case Nif.number_format_compact(resource, number) do
+      {:ok, {formatted, displayed_value}} ->
+        {:ok, %{formatted: formatted, displayed_value: String.to_integer(displayed_value)}}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  def format_compact(%__MODULE__{}, _other), do: {:error, :invalid_number}
 
   @spec format!(t(), number()) :: String.t()
   def format!(%__MODULE__{} = formatter, number) do
@@ -78,6 +94,9 @@ defmodule Icu.Number.Formatter do
           :minimum_fraction_digits,
           :maximum_integer_digits,
           :maximum_fraction_digits,
+          :notation,
+          :compact_display,
+          :rounding_mode,
           :locale
         ])
     )

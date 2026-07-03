@@ -54,6 +54,9 @@ defmodule Icu.Nif do
 
   def number_format(_formatter_resource, _number), do: :erlang.nif_error(:nif_not_loaded)
 
+  def number_format_compact(_formatter_resource, _number),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   def number_format_to_parts(_formatter_resource, _number),
     do: :erlang.nif_error(:nif_not_loaded)
 

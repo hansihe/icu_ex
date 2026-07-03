@@ -162,6 +162,18 @@ defmodule Icu.Formatter.Options do
     {:ok, value}
   end
 
+  def normalize_option(:number, :notation, value) when value in [:standard, :compact] do
+    {:ok, value}
+  end
+
+  def normalize_option(:number, :compact_display, value) when value in [:short, :long] do
+    {:ok, value}
+  end
+
+  def normalize_option(:number, :rounding_mode, value) when value in [:half_even, :trunc] do
+    {:ok, value}
+  end
+
   # Currency
   def normalize_option(:currency, :width, value) when value in [:short, :narrow, :long],
     do: {:ok, value}
