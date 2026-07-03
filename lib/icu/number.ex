@@ -120,6 +120,9 @@ defmodule Icu.Number do
       iex> Icu.Number.format(42, sign_display: :always)
       {:ok, "+42.000"}
 
+      iex> Icu.Number.format(194_438, notation: :compact)
+      {:ok, "194K"}
+
       iex> Icu.Number.format(0.5, style: :percent)
       {:ok, "50%"}
   """
@@ -159,6 +162,12 @@ defmodule Icu.Number do
   Accepts the same options as `format/2`; `:compact_display` and `:rounding_mode`
   are the relevant knobs.
 
+  Because `:displayed_value` is an integer, this function is **integer-domain**: it
+  accepts integers and integer-valued floats/decimals (`6718.0`, `Decimal.new("6718")`)
+  but returns `{:error, :invalid_number}` for a value with a fractional part. To
+  compact-format an arbitrary number for display only, use `format/2` with
+  `notation: :compact`, which has no `:displayed_value` and accepts any number.
+
   ## Examples
 
       iex> Icu.Number.format_compact(194_438, locale: "en", rounding_mode: :trunc)
@@ -166,6 +175,15 @@ defmodule Icu.Number do
 
       iex> Icu.Number.format_compact(6_718, locale: "en", rounding_mode: :trunc)
       {:ok, %{formatted: "6K", displayed_value: 6_000}}
+
+      iex> Icu.Number.format_compact(780, locale: "en")
+      {:ok, %{formatted: "780", displayed_value: 780}}
+
+      iex> Icu.Number.format_compact(Decimal.new("6718"), locale: "en", rounding_mode: :trunc)
+      {:ok, %{formatted: "6K", displayed_value: 6_000}}
+
+      iex> Icu.Number.format_compact(6_718.5, locale: "en")
+      {:error, :invalid_number}
   """
   @spec format_compact(number(), options_input()) ::
           {:ok, compact_result()} | {:error, format_error()}
@@ -182,6 +200,9 @@ defmodule Icu.Number do
   ## Examples
 
       iex> Icu.Number.format_compact!(194_438, locale: "en", rounding_mode: :trunc)
+      %{formatted: "194K", displayed_value: 194_000}
+
+      iex> Icu.Number.format_compact!(194_438)
       %{formatted: "194K", displayed_value: 194_000}
   """
   @spec format_compact!(number(), options_input()) :: compact_result()

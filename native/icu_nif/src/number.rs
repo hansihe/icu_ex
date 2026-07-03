@@ -281,6 +281,13 @@ pub(crate) fn number_format_compact<'a>(
         Err(_) => return Ok((atoms::error(), atoms::invalid_number()).encode(env)),
     };
 
+    // displayed_value is defined as the integer the abbreviation represents, so
+    // format_compact is integer-domain. Reject inputs with a nonzero fractional
+    // part (trailing fractional zeros, e.g. 6718.0, are still integer-valued).
+    if decimal.absolute.nonzero_magnitude_end() < 0 {
+        return Ok((atoms::error(), atoms::invalid_number()).encode(env));
+    }
+
     decimal.apply_sign_display(formatter_resource.config.sign_display);
 
     match format_compact(formatter, &decimal, formatter_resource.config.rounding_mode) {
