@@ -30,3 +30,5 @@ cldr
 priv/native
 
 .expert
+
+checksum-Elixir.Icu.Nif.exs
