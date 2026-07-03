@@ -1,0 +1,400 @@
+defmodule Icu.Number.CompactTest do
+  use ExUnit.Case, async: true
+
+  alias Icu.Number
+  alias Icu.Number.Formatter
+
+  # Expected strings are what ICU4X actually produces at the pinned rev; a few
+  # are non-obvious (German short does not abbreviate thousands, Russian uses a
+  # NO-BREAK SPACE) so they are asserted verbatim rather than guessed from CLDR.
+  #
+  # format_compact returns :displayed_value as a %Decimal{}; assert_compact
+  # compares it numerically (so "6000" and 6_000 match regardless of scale).
+
+  defp assert_compact(result, formatted, displayed) do
+    assert {:ok, %{formatted: ^formatted, displayed_value: dv}} = result
+
+    assert Decimal.equal?(dv, Decimal.new(displayed)),
+           "displayed_value #{Decimal.to_string(dv)} != #{displayed}"
+  end
+
+  describe "format_compact/2 (English, short)" do
+    test "abbreviates thousands with half-even rounding by default" do
+      assert_compact(Number.format_compact(194_438, locale: "en"), "194K", 194_000)
+    end
+
+    test "half-even keeps a fractional digit for single-digit significands" do
+      assert_compact(Number.format_compact(6_718, locale: "en"), "6.7K", 6_700)
+    end
+
+    test "trunc never rounds up and floors to whole units" do
+      assert_compact(
+        Number.format_compact(194_438, locale: "en", rounding_mode: :trunc),
+        "194K",
+        194_000
+      )
+
+      assert_compact(
+        Number.format_compact(6_718, locale: "en", rounding_mode: :trunc),
+        "6K",
+        6_000
+      )
+    end
+
+    test "small numbers are not abbreviated" do
+      for mode <- [:half_even, :trunc] do
+        assert_compact(
+          Number.format_compact(780, locale: "en", rounding_mode: mode),
+          "780",
+          780
+        )
+      end
+    end
+
+    test "long display spells the magnitude out" do
+      assert_compact(
+        Number.format_compact(194_438,
+          locale: "en",
+          compact_display: :long,
+          rounding_mode: :trunc
+        ),
+        "194 thousand",
+        194_000
+      )
+    end
+
+    test "negative values floor towards zero in magnitude" do
+      assert_compact(
+        Number.format_compact(-13_132, locale: "en", rounding_mode: :trunc),
+        "-13K",
+        -13_000
+      )
+    end
+  end
+
+  describe "format_compact/2 (Russian)" do
+    test "uses тыс.-style suffix with a no-break space" do
+      assert_compact(
+        Number.format_compact(194_438, locale: "ru", rounding_mode: :trunc),
+        "194 тыс.",
+        194_000
+      )
+
+      assert_compact(
+        Number.format_compact(12_000, locale: "ru", rounding_mode: :trunc),
+        "12 тыс.",
+        12_000
+      )
+    end
+  end
+
+  describe "format_compact/2 (Japanese / Chinese, 万-based grouping)" do
+    test "thousands below 10,000 are not abbreviated" do
+      assert {:ok, %{formatted: formatted, displayed_value: dv}} =
+               Number.format_compact(3_000, locale: "ja", rounding_mode: :trunc)
+
+      refute formatted =~ "万"
+      assert Decimal.equal?(dv, Decimal.new(3_000))
+    end
+
+    test "trunc floors at the 万 boundary" do
+      assert_compact(
+        Number.format_compact(15_000, locale: "ja", rounding_mode: :trunc),
+        "1万",
+        10_000
+      )
+
+      assert_compact(
+        Number.format_compact(15_000, locale: "zh", rounding_mode: :trunc),
+        "1万",
+        10_000
+      )
+    end
+
+    test "half-even keeps the significand" do
+      assert_compact(Number.format_compact(15_000, locale: "ja"), "1.5万", 15_000)
+    end
+  end
+
+  describe "format_compact/2 (German)" do
+    test "short notation does not abbreviate thousands (CLDR)" do
+      assert_compact(
+        Number.format_compact(194_438, locale: "de", rounding_mode: :trunc),
+        "194.438",
+        194_438
+      )
+    end
+
+    test "long notation abbreviates with Tausend" do
+      assert_compact(
+        Number.format_compact(194_438,
+          locale: "de",
+          compact_display: :long,
+          rounding_mode: :trunc
+        ),
+        "194 Tausend",
+        194_000
+      )
+    end
+  end
+
+  describe "displayed_value invariants" do
+    @cases [
+      {"en", 194_438},
+      {"en", 6_718},
+      {"en", 780},
+      {"ru", 194_438},
+      {"ja", 3_000},
+      {"ja", 15_000},
+      {"zh", 15_000},
+      {"de", 194_438}
+    ]
+
+    test "trunc never overstates the input and the string matches the value" do
+      for {locale, n} <- @cases do
+        assert {:ok, %{formatted: formatted, displayed_value: displayed}} =
+                 Number.format_compact(n, locale: locale, rounding_mode: :trunc)
+
+        assert Decimal.compare(displayed, n) in [:lt, :eq],
+               "#{locale} #{n}: displayed #{Decimal.to_string(displayed)} overstates input"
+
+        # The compact string must denote exactly the displayed value: formatting
+        # the displayed value itself (a Decimal, now a valid input) is a no-op.
+        assert {:ok, %{formatted: ^formatted}} =
+                 Number.format_compact(displayed, locale: locale, rounding_mode: :trunc)
+      end
+    end
+  end
+
+  describe "notation via format/2" do
+    test "notation: :compact returns just the string" do
+      assert {:ok, "194K"} = Number.format(194_438, locale: "en", notation: :compact)
+    end
+
+    test "format!/2 with compact notation" do
+      assert "194K" = Number.format!(194_438, locale: "en", notation: :compact)
+    end
+
+    test "format_compact/2 forces compact even if :standard is passed" do
+      assert {:ok, %{formatted: "194K"}} =
+               Number.format_compact(194_438, locale: "en", notation: :standard)
+    end
+  end
+
+  describe "compact formatter constraints" do
+    test "format_to_parts is rejected for a compact formatter" do
+      {:ok, formatter} = Formatter.new(locale: "en", notation: :compact)
+      assert {:error, :invalid_options} = Formatter.format_to_parts(formatter, 194_438)
+    end
+
+    test "format_compact is rejected for a standard formatter" do
+      {:ok, formatter} = Formatter.new(locale: "en")
+      assert {:error, :invalid_formatter} = Formatter.format_compact(formatter, 194_438)
+    end
+
+    test "rejects invalid option values" do
+      assert {:error, _} = Number.format_compact(1000, locale: "en", rounding_mode: :bogus)
+      assert {:error, _} = Number.format_compact(1000, locale: "en", compact_display: :bogus)
+      assert {:error, _} = Number.format(1000, locale: "en", notation: :bogus)
+    end
+
+    test "rejects non-numeric values" do
+      assert {:error, :invalid_number} = Number.format_compact(:nope, locale: "en")
+    end
+  end
+
+  describe "standard notation is unchanged" do
+    test "default notation still formats plainly" do
+      assert {:ok, "1,234.500"} = Number.format(1234.5, locale: "en")
+      assert {:ok, "194,438.000"} = Number.format(194_438, locale: "en")
+    end
+  end
+
+  describe "bucket boundaries (en)" do
+    test "zero and sub-thousand are not abbreviated" do
+      assert_compact(Number.format_compact(0, locale: "en", rounding_mode: :trunc), "0", 0)
+      assert_compact(Number.format_compact(999, locale: "en", rounding_mode: :trunc), "999", 999)
+    end
+
+    test "thousand and million crossovers with trunc" do
+      assert_compact(
+        Number.format_compact(1_000, locale: "en", rounding_mode: :trunc),
+        "1K",
+        1_000
+      )
+
+      assert_compact(
+        Number.format_compact(9_999, locale: "en", rounding_mode: :trunc),
+        "9K",
+        9_000
+      )
+
+      assert_compact(
+        Number.format_compact(10_000, locale: "en", rounding_mode: :trunc),
+        "10K",
+        10_000
+      )
+
+      assert_compact(
+        Number.format_compact(999_999, locale: "en", rounding_mode: :trunc),
+        "999K",
+        999_000
+      )
+
+      assert_compact(
+        Number.format_compact(1_000_000, locale: "en", rounding_mode: :trunc),
+        "1M",
+        1_000_000
+      )
+    end
+
+    test "half-even rounds up at boundaries where trunc floors" do
+      # 9_999 rounds to 10K but truncates to 9K; 999_999 rounds to 1M.
+      assert_compact(
+        Number.format_compact(9_999, locale: "en", rounding_mode: :half_even),
+        "10K",
+        10_000
+      )
+
+      assert_compact(
+        Number.format_compact(999_999, locale: "en", rounding_mode: :half_even),
+        "1M",
+        1_000_000
+      )
+    end
+  end
+
+  describe "bucket boundaries (ja, 万-based)" do
+    test "does not abbreviate below 10,000" do
+      assert_compact(
+        Number.format_compact(1_000, locale: "ja", rounding_mode: :trunc),
+        "1,000",
+        1_000
+      )
+
+      assert_compact(
+        Number.format_compact(9_999, locale: "ja", rounding_mode: :trunc),
+        "9,999",
+        9_999
+      )
+    end
+
+    test "abbreviates from the 万 boundary" do
+      assert_compact(
+        Number.format_compact(10_000, locale: "ja", rounding_mode: :trunc),
+        "1万",
+        10_000
+      )
+
+      assert_compact(
+        Number.format_compact(999_999, locale: "ja", rounding_mode: :trunc),
+        "99万",
+        990_000
+      )
+
+      assert_compact(
+        Number.format_compact(1_000_000, locale: "ja", rounding_mode: :trunc),
+        "100万",
+        1_000_000
+      )
+    end
+  end
+
+  describe "extreme magnitudes" do
+    test "i64 max and negatives" do
+      assert_compact(
+        Number.format_compact(9_223_372_036_854_775_807, locale: "en", rounding_mode: :trunc),
+        "9,223,372T",
+        9_223_372_000_000_000_000
+      )
+
+      assert_compact(
+        Number.format_compact(-13_132, locale: "en", rounding_mode: :trunc),
+        "-13K",
+        -13_000
+      )
+    end
+
+    test "integers beyond i64 (BigInt path)" do
+      assert_compact(
+        Number.format_compact(12_345_678_901_234_567_890, locale: "en", rounding_mode: :trunc),
+        "12,345,678T",
+        Decimal.new("12345678000000000000")
+      )
+    end
+  end
+
+  describe "input domain (same as format/2)" do
+    test "accepts integer-valued floats and decimals" do
+      assert_compact(
+        Number.format_compact(6_718.0, locale: "en", rounding_mode: :trunc),
+        "6K",
+        6_000
+      )
+
+      assert_compact(
+        Number.format_compact(Decimal.new("6718"), locale: "en", rounding_mode: :trunc),
+        "6K",
+        6_000
+      )
+
+      assert_compact(
+        Number.format_compact(Decimal.new("6718.00"), locale: "en", rounding_mode: :trunc),
+        "6K",
+        6_000
+      )
+    end
+
+    test "accepts fractional inputs; displayed_value denotes the string exactly" do
+      # Un-abbreviated: half-even preserves the fraction and displayed matches it.
+      assert_compact(Number.format_compact(5.5, locale: "en"), "5.5", Decimal.new("5.5"))
+
+      # Abbreviated + trunc: the significand truncates to whole units.
+      assert_compact(
+        Number.format_compact(6_718.5, locale: "en", rounding_mode: :trunc),
+        "6K",
+        6_000
+      )
+    end
+
+    test "trunc at the compact boundary never overstates a fractional input" do
+      # 1234.5 truncates its significand (1.2345 -> 1), not up to "2K".
+      assert_compact(
+        Number.format_compact(1234.5, locale: "en", rounding_mode: :trunc),
+        "1K",
+        1_000
+      )
+
+      # 999.9 stays below the K threshold — must NOT become "1K".
+      assert_compact(
+        Number.format_compact(999.9, locale: "en", rounding_mode: :trunc),
+        "999",
+        999
+      )
+
+      # ja: 9999.5 is below the 万 boundary and must not abbreviate.
+      assert_compact(
+        Number.format_compact(9999.5, locale: "ja", rounding_mode: :trunc),
+        "9,999",
+        9_999
+      )
+    end
+
+    test "format/2 with compact notation also accepts fractional numbers (string only)" do
+      assert {:ok, "1.2K"} = Number.format(1234.5, locale: "en", notation: :compact)
+      assert {:ok, "5.5"} = Number.format(5.5, locale: "en", notation: :compact)
+    end
+  end
+
+  describe "locale handling" do
+    test "a malformed locale is rejected" do
+      assert {:error, {:invalid_option_value, :locale}} =
+               Number.format_compact(1_000, locale: "!!!")
+    end
+
+    test "an unknown but well-formed locale falls back without crashing" do
+      assert {:ok, %{formatted: formatted}} = Number.format_compact(1_000, locale: "zz")
+      assert is_binary(formatted) and formatted != ""
+    end
+  end
+end

@@ -2,9 +2,11 @@ use std::convert::TryFrom;
 use std::fmt;
 
 use fixed_decimal::Decimal as FixedDecimal;
-use fixed_decimal::{FloatPrecision, SignDisplay};
+use fixed_decimal::{CompactDecimal, FloatPrecision, SignDisplay};
 use icu::decimal::options::{DecimalFormatterOptions, GroupingStrategy};
 use icu::decimal::{parts, DecimalFormatter};
+use icu::experimental::compactdecimal::{CompactDecimalFormatter, CompactDecimalFormatterOptions};
+use icu::experimental::dimension::percent::formatter::PercentFormatter;
 use rustler::types::map::MapIterator;
 use rustler::types::BigInt;
 use rustler::{Atom, Encoder, Env, NifMap, NifResult, ResourceArc, Term, TermType};
@@ -14,19 +16,59 @@ use crate::atoms;
 use crate::locale::LocaleResource;
 
 pub(crate) struct NumberFormatterResource {
-    formatter: DecimalFormatter,
+    formatter: FormatterKind,
     config: FormatterConfig,
 }
 
 impl rustler::Resource for NumberFormatterResource {}
+
+/// The ICU4X formatter selected for this resource. Each style/notation maps to a
+/// distinct ICU4X type, so the choice is made once at construction time.
+enum FormatterKind {
+    Standard(DecimalFormatter),
+    // Boxed: these formatters are substantially larger than DecimalFormatter.
+    Compact(Box<CompactDecimalFormatter>),
+    Percent(Box<PercentFormatter<DecimalFormatter>>),
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Notation {
+    Standard,
+    Compact,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Style {
+    Decimal,
+    Percent,
+}
+
+#[derive(Clone, Copy)]
+enum CompactDisplay {
+    Short,
+    Long,
+}
+
+#[derive(Clone, Copy)]
+enum RoundingMode {
+    HalfEven,
+    Trunc,
+}
 
 #[derive(Clone)]
 struct FormatterConfig {
     minimum_integer_digits: u16,
     minimum_fraction_digits: u16,
     maximum_fraction_digits: Option<u16>,
+    // Whether the caller set maximum_fraction_digits explicitly. Percent style
+    // defaults to 0 fraction digits (Intl semantics) when it was left unset.
+    maximum_fraction_digits_set: bool,
     grouping_strategy: GroupingStrategy,
     sign_display: SignDisplay,
+    notation: Notation,
+    style: Style,
+    compact_display: CompactDisplay,
+    rounding_mode: RoundingMode,
 }
 
 impl Default for FormatterConfig {
@@ -35,8 +77,13 @@ impl Default for FormatterConfig {
             minimum_integer_digits: 1,
             minimum_fraction_digits: 0,
             maximum_fraction_digits: Some(3),
+            maximum_fraction_digits_set: false,
             grouping_strategy: GroupingStrategy::Auto,
             sign_display: SignDisplay::Auto,
+            notation: Notation::Standard,
+            style: Style::Decimal,
+            compact_display: CompactDisplay::Short,
+            rounding_mode: RoundingMode::HalfEven,
         }
     }
 }
@@ -122,14 +169,45 @@ pub(crate) fn number_formatter_new<'a>(
         Err(_) => return Ok((atoms::error(), atoms::invalid_options()).encode(env)),
     };
 
+    // Percent is a distinct ICU4X formatter and has no compact variant at the
+    // pinned rev, so the two are mutually exclusive.
+    if config.style == Style::Percent && config.notation == Notation::Compact {
+        return Ok((atoms::error(), atoms::invalid_options()).encode(env));
+    }
+
     let mut formatter_options = DecimalFormatterOptions::default();
     formatter_options.grouping_strategy = Some(config.grouping_strategy);
 
-    let formatter =
-        match DecimalFormatter::try_new(locale_resource.0.clone().into(), formatter_options) {
-            Ok(formatter) => formatter,
-            Err(_) => return Ok((atoms::error(), atoms::invalid_locale()).encode(env)),
-        };
+    let formatter = match (config.style, config.notation) {
+        (Style::Percent, _) => {
+            match PercentFormatter::try_new(locale_resource.0.clone().into(), Default::default()) {
+                Ok(formatter) => FormatterKind::Percent(Box::new(formatter)),
+                Err(_) => return Ok((atoms::error(), atoms::invalid_locale()).encode(env)),
+            }
+        }
+        (Style::Decimal, Notation::Standard) => {
+            match DecimalFormatter::try_new(locale_resource.0.clone().into(), formatter_options) {
+                Ok(formatter) => FormatterKind::Standard(formatter),
+                Err(_) => return Ok((atoms::error(), atoms::invalid_locale()).encode(env)),
+            }
+        }
+        (Style::Decimal, Notation::Compact) => {
+            let compact_options = CompactDecimalFormatterOptions::from(formatter_options);
+            let prefs = locale_resource.0.clone().into();
+            let result = match config.compact_display {
+                CompactDisplay::Short => {
+                    CompactDecimalFormatter::try_new_short(prefs, compact_options)
+                }
+                CompactDisplay::Long => {
+                    CompactDecimalFormatter::try_new_long(prefs, compact_options)
+                }
+            };
+            match result {
+                Ok(formatter) => FormatterKind::Compact(Box::new(formatter)),
+                Err(_) => return Ok((atoms::error(), atoms::invalid_locale()).encode(env)),
+            }
+        }
+    };
 
     let resource = NumberFormatterResource { formatter, config };
     Ok((atoms::ok(), ResourceArc::new(resource)).encode(env))
@@ -151,10 +229,127 @@ pub(crate) fn number_format<'a>(
         Err(_) => return Ok((atoms::error(), atoms::invalid_number()).encode(env)),
     };
 
-    apply_config(&mut decimal, &formatter_resource.config);
+    match &formatter_resource.formatter {
+        FormatterKind::Standard(formatter) => {
+            apply_config(&mut decimal, &formatter_resource.config);
+            let formatted = formatter.format(&decimal).to_string();
+            Ok((atoms::ok(), formatted).encode(env))
+        }
+        FormatterKind::Compact(formatter) => {
+            decimal.apply_sign_display(formatter_resource.config.sign_display);
+            match format_compact(formatter, &decimal, formatter_resource.config.rounding_mode) {
+                Ok((formatted, _displayed)) => Ok((atoms::ok(), formatted).encode(env)),
+                Err(_) => Ok((atoms::error(), atoms::invalid_number()).encode(env)),
+            }
+        }
+        FormatterKind::Percent(formatter) => {
+            // Intl semantics: the input is a ratio, so scale by 100 (0.5 -> 50%).
+            decimal.multiply_pow10(2);
+            let mut config = formatter_resource.config.clone();
+            // Intl percent defaults to 0 fraction digits unless the caller asked
+            // for more; without this the shared decimal default (3) yields "50.000%".
+            if !config.maximum_fraction_digits_set {
+                config.maximum_fraction_digits = Some(0);
+            }
+            apply_config(&mut decimal, &config);
+            let formatted = formatter.format(&decimal).to_string();
+            Ok((atoms::ok(), formatted).encode(env))
+        }
+    }
+}
 
-    let formatted = formatter_resource.formatter.format(&decimal).to_string();
-    Ok((atoms::ok(), formatted).encode(env))
+#[rustler::nif]
+pub(crate) fn number_format_compact<'a>(
+    env: Env<'a>,
+    formatter_term: Term<'a>,
+    number_term: Term<'a>,
+) -> NifResult<Term<'a>> {
+    let formatter_resource: ResourceArc<NumberFormatterResource> = match formatter_term.decode() {
+        Ok(resource) => resource,
+        Err(_) => return Ok((atoms::error(), atoms::invalid_formatter()).encode(env)),
+    };
+
+    let formatter = match &formatter_resource.formatter {
+        FormatterKind::Compact(formatter) => formatter,
+        FormatterKind::Standard(_) | FormatterKind::Percent(_) => {
+            return Ok((atoms::error(), atoms::invalid_formatter()).encode(env))
+        }
+    };
+
+    let mut decimal = match term_to_decimal(number_term) {
+        Ok(decimal) => decimal,
+        Err(_) => return Ok((atoms::error(), atoms::invalid_number()).encode(env)),
+    };
+
+    decimal.apply_sign_display(formatter_resource.config.sign_display);
+
+    match format_compact(formatter, &decimal, formatter_resource.config.rounding_mode) {
+        Ok((formatted, displayed_value)) => {
+            Ok((atoms::ok(), (formatted, displayed_value)).encode(env))
+        }
+        Err(_) => Ok((atoms::error(), atoms::invalid_number()).encode(env)),
+    }
+}
+
+/// Format a decimal in compact notation and report the exact numeric value the
+/// abbreviated string represents.
+///
+/// The returned string pair is `(formatted, displayed_value)` where
+/// `displayed_value` is the exact numeric the compact string stands for, as a
+/// plain decimal string (no grouping, no explicit `+`) — the Elixir side parses
+/// it into a `Decimal`. Callers compare it against the input to decide whether
+/// to append a localised "+".
+///
+/// With [`RoundingMode::HalfEven`] we defer to ICU4X's own rounding and read the
+/// resolved [`CompactDecimal`] back out. With [`RoundingMode::Trunc`] we pick the
+/// locale's compact exponent for the value's magnitude, truncate the significand
+/// towards zero to whole units ourselves, and hand ICU4X a fully-resolved
+/// [`CompactDecimal`] via `format_compact_decimal`, which performs no rounding.
+fn format_compact(
+    formatter: &CompactDecimalFormatter,
+    value: &FixedDecimal,
+    rounding_mode: RoundingMode,
+) -> Result<(String, String), ()> {
+    let (formatted, compact) = match rounding_mode {
+        RoundingMode::HalfEven => {
+            let formatted = formatter.format_fixed_decimal(value);
+            (
+                formatted.to_string(),
+                formatted.get_compact_decimal().clone(),
+            )
+        }
+        RoundingMode::Trunc => {
+            let magnitude = value.absolute.nonzero_magnitude_start();
+            let exponent = formatter.compact_exponent_for_magnitude(magnitude);
+
+            let mut significand = value.clone();
+            significand.multiply_pow10(-i16::from(exponent));
+            // Truncate towards zero to whole units so the abbreviation never
+            // overstates the value (6,718 -> "6K", never "7K").
+            significand.trunc(0);
+            significand.absolute.trim_end();
+
+            let compact = CompactDecimal::from_significand_and_exponent(significand, exponent);
+            let formatted = formatter.format_compact_decimal(&compact).map_err(|_| ())?;
+            (formatted.to_string(), compact)
+        }
+    };
+
+    Ok((formatted, displayed_value(&compact)))
+}
+
+/// Recover the exact numeric a [`CompactDecimal`] represents (significand scaled
+/// back up by its exponent), rendered without grouping. A leading explicit `+`
+/// (from a `sign_display` setting) is stripped so the value parses cleanly as a
+/// `Decimal` on the Elixir side.
+fn displayed_value(compact: &CompactDecimal) -> String {
+    let mut value = compact.significand().clone();
+    value.multiply_pow10(i16::from(compact.exponent()));
+    let rendered = value.to_string();
+    rendered
+        .strip_prefix('+')
+        .map(str::to_string)
+        .unwrap_or(rendered)
 }
 
 #[rustler::nif]
@@ -168,6 +363,14 @@ pub(crate) fn number_format_to_parts<'a>(
         Err(_) => return Ok((atoms::error(), atoms::invalid_formatter()).encode(env)),
     };
 
+    let formatter = match &formatter_resource.formatter {
+        FormatterKind::Standard(formatter) => formatter,
+        // Parts output is only meaningful for the plain decimal formatter.
+        FormatterKind::Compact(_) | FormatterKind::Percent(_) => {
+            return Ok((atoms::error(), atoms::invalid_options()).encode(env))
+        }
+    };
+
     let mut decimal = match term_to_decimal(number_term) {
         Ok(decimal) => decimal,
         Err(_) => return Ok((atoms::error(), atoms::invalid_number()).encode(env)),
@@ -175,9 +378,9 @@ pub(crate) fn number_format_to_parts<'a>(
 
     apply_config(&mut decimal, &formatter_resource.config);
 
-    let formatted = formatter_resource.formatter.format(&decimal);
+    let formatted = formatter.format(&decimal);
     let mut collector = PartsCollector::new();
-    if let Err(_) = formatted.write_to_parts(&mut collector) {
+    if formatted.write_to_parts(&mut collector).is_err() {
         return Ok((atoms::error(), atoms::invalid_number()).encode(env));
     }
     let (output, collected_parts) = collector.into_number_parts();
@@ -208,9 +411,9 @@ fn decode_formatter_config<'a>(term: Term<'a>) -> Result<FormatterConfig, ()> {
     }
 
     let mut config = FormatterConfig::default();
-    let mut iter = MapIterator::new(term).ok_or(())?;
+    let iter = MapIterator::new(term).ok_or(())?;
 
-    while let Some((key_term, value_term)) = iter.next() {
+    for (key_term, value_term) in iter {
         let key: Atom = key_term.decode().map_err(|_| ())?;
         if key == atoms::minimum_integer_digits() {
             let value: i64 = value_term.decode().map_err(|_| ())?;
@@ -225,6 +428,8 @@ fn decode_formatter_config<'a>(term: Term<'a>) -> Result<FormatterConfig, ()> {
             }
             config.minimum_fraction_digits = value as u16;
         } else if key == atoms::maximum_fraction_digits() {
+            config.maximum_fraction_digits_set = true;
+
             if value_term.get_type() == TermType::Atom {
                 if let Ok(atom_name) = value_term.atom_to_string() {
                     if atom_name == "nil" {
@@ -256,6 +461,34 @@ fn decode_formatter_config<'a>(term: Term<'a>) -> Result<FormatterConfig, ()> {
                 _ if value == atoms::never() => SignDisplay::Never,
                 _ if value == atoms::except_zero() => SignDisplay::ExceptZero,
                 _ if value == atoms::negative() => SignDisplay::Negative,
+                _ => return Err(()),
+            };
+        } else if key == atoms::style() {
+            let value: Atom = value_term.decode().map_err(|_| ())?;
+            config.style = match value {
+                _ if value == atoms::decimal() => Style::Decimal,
+                _ if value == atoms::percent() => Style::Percent,
+                _ => return Err(()),
+            };
+        } else if key == atoms::notation() {
+            let value: Atom = value_term.decode().map_err(|_| ())?;
+            config.notation = match value {
+                _ if value == atoms::standard() => Notation::Standard,
+                _ if value == atoms::compact() => Notation::Compact,
+                _ => return Err(()),
+            };
+        } else if key == atoms::compact_display() {
+            let value: Atom = value_term.decode().map_err(|_| ())?;
+            config.compact_display = match value {
+                _ if value == atoms::short() => CompactDisplay::Short,
+                _ if value == atoms::long() => CompactDisplay::Long,
+                _ => return Err(()),
+            };
+        } else if key == atoms::rounding_mode() {
+            let value: Atom = value_term.decode().map_err(|_| ())?;
+            config.rounding_mode = match value {
+                _ if value == atoms::half_even() => RoundingMode::HalfEven,
+                _ if value == atoms::trunc() => RoundingMode::Trunc,
                 _ => return Err(()),
             };
         } else {
