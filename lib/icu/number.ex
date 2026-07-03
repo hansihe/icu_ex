@@ -63,12 +63,13 @@ defmodule Icu.Number do
   @type rounding_mode :: :half_even | :trunc
 
   @typedoc """
-  The formatted compact string alongside the exact integer it represents.
+  The formatted compact string alongside the exact numeric it represents.
 
-  `:displayed_value` is what the abbreviation stands for (e.g. `194_000` for
-  `"194K"`), so callers can append a localised "+" when it understates the input.
+  `:displayed_value` is a `Decimal` — what the abbreviation stands for (e.g.
+  `Decimal.new("194000")` for `"194K"`) — so callers can `Decimal.compare/2` it
+  against the input and append a localised "+" when it understates.
   """
-  @type compact_result :: %{formatted: String.t(), displayed_value: integer()}
+  @type compact_result :: %{formatted: String.t(), displayed_value: Decimal.t()}
 
   @typedoc "Keyword form of the supported options."
   @type options_list ::
@@ -155,35 +156,39 @@ defmodule Icu.Number do
   Formats a number in compact notation, returning both the string and the exact
   numeric value it represents.
 
-  Always uses `notation: :compact` (any `:notation` in `options` is ignored). The
-  returned `:displayed_value` is the integer the abbreviation stands for, letting
-  callers detect when the display understates the input (e.g. to append a "+").
+  Always uses `notation: :compact` (any `:notation` in `options` is ignored).
+  Accepts the same inputs as `format/2` (integers, floats, `Decimal`s, including
+  fractional values); `:compact_display` and `:rounding_mode` are the relevant
+  knobs.
 
-  Accepts the same options as `format/2`; `:compact_display` and `:rounding_mode`
-  are the relevant knobs.
+  `:displayed_value` is a `Decimal` giving the exact numeric the abbreviation
+  denotes. Compare it against the input to detect when the display understates
+  the value (e.g. to append a localised "+"):
 
-  Because `:displayed_value` is an integer, this function is **integer-domain**: it
-  accepts integers and integer-valued floats/decimals (`6718.0`, `Decimal.new("6718")`)
-  but returns `{:error, :invalid_number}` for a value with a fractional part. To
-  compact-format an arbitrary number for display only, use `format/2` with
-  `notation: :compact`, which has no `:displayed_value` and accepts any number.
+      iex> {:ok, %{formatted: formatted, displayed_value: displayed}} =
+      ...>   Icu.Number.format_compact(6_718, locale: "en", rounding_mode: :trunc)
+      iex> formatted
+      "6K"
+      iex> Decimal.compare(displayed, 6_718)
+      :lt
+
+  Under `rounding_mode: :trunc` the abbreviation never overstates the input, so
+  `Decimal.compare(displayed_value, input)` is always `:lt` or `:eq`.
 
   ## Examples
 
-      iex> Icu.Number.format_compact(194_438, locale: "en", rounding_mode: :trunc)
-      {:ok, %{formatted: "194K", displayed_value: 194_000}}
+      iex> {:ok, result} = Icu.Number.format_compact(194_438, locale: "en", rounding_mode: :trunc)
+      iex> {result.formatted, Decimal.to_string(result.displayed_value)}
+      {"194K", "194000"}
 
-      iex> Icu.Number.format_compact(6_718, locale: "en", rounding_mode: :trunc)
-      {:ok, %{formatted: "6K", displayed_value: 6_000}}
+      iex> {:ok, result} = Icu.Number.format_compact(780, locale: "en")
+      iex> {result.formatted, Decimal.to_string(result.displayed_value)}
+      {"780", "780"}
 
-      iex> Icu.Number.format_compact(780, locale: "en")
-      {:ok, %{formatted: "780", displayed_value: 780}}
-
-      iex> Icu.Number.format_compact(Decimal.new("6718"), locale: "en", rounding_mode: :trunc)
-      {:ok, %{formatted: "6K", displayed_value: 6_000}}
-
-      iex> Icu.Number.format_compact(6_718.5, locale: "en")
-      {:error, :invalid_number}
+      iex> # fractional inputs are accepted; the Decimal denotes the string exactly
+      iex> {:ok, result} = Icu.Number.format_compact(5.5, locale: "en")
+      iex> {result.formatted, Decimal.to_string(result.displayed_value)}
+      {"5.5", "5.5"}
   """
   @spec format_compact(number(), options_input()) ::
           {:ok, compact_result()} | {:error, format_error()}
@@ -199,11 +204,9 @@ defmodule Icu.Number do
 
   ## Examples
 
-      iex> Icu.Number.format_compact!(194_438, locale: "en", rounding_mode: :trunc)
-      %{formatted: "194K", displayed_value: 194_000}
-
-      iex> Icu.Number.format_compact!(194_438)
-      %{formatted: "194K", displayed_value: 194_000}
+      iex> result = Icu.Number.format_compact!(194_438, locale: "en", rounding_mode: :trunc)
+      iex> {result.formatted, Decimal.to_string(result.displayed_value)}
+      {"194K", "194000"}
   """
   @spec format_compact!(number(), options_input()) :: compact_result()
   def format_compact!(number, options \\ []) do

@@ -14,6 +14,14 @@ defmodule Icu.Number.LocaleCoverageTest do
 
   @values [780, 6_718, 194_438, 2_500_000]
 
+  # displayed_value is a %Decimal{}; compare numerically.
+  defp assert_compact(result, formatted, displayed) do
+    assert {:ok, %{formatted: ^formatted, displayed_value: dv}} = result
+
+    assert Decimal.equal?(dv, Decimal.new(displayed)),
+           "displayed_value #{Decimal.to_string(dv)} != #{displayed}"
+  end
+
   describe "compact invariants across all shipped locales" do
     test "every locale/value produces a sane, self-consistent compact result" do
       for locale <- @locales, n <- @values do
@@ -26,13 +34,16 @@ defmodule Icu.Number.LocaleCoverageTest do
                "#{locale} #{n}: empty formatted string"
 
         # (b) trunc never overstates the input
-        assert displayed <= n, "#{locale} #{n}: displayed #{displayed} overstates input"
-        assert displayed > 0, "#{locale} #{n}: displayed #{displayed} not positive"
+        assert Decimal.compare(displayed, n) in [:lt, :eq],
+               "#{locale} #{n}: displayed #{Decimal.to_string(displayed)} overstates input"
 
-        # (c) the displayed value is compact-round: re-formatting it is a fixpoint
+        assert Decimal.compare(displayed, 0) == :gt,
+               "#{locale} #{n}: displayed #{Decimal.to_string(displayed)} not positive"
+
+        # (c) the displayed value is compact-round: re-formatting the Decimal is a fixpoint
         assert {:ok, %{formatted: ^formatted}} =
                  Number.format_compact(displayed, locale: locale, rounding_mode: :trunc),
-               "#{locale} #{n}: displayed #{displayed} is not a formatting fixpoint (#{inspect(formatted)})"
+               "#{locale} #{n}: displayed #{Decimal.to_string(displayed)} is not a fixpoint (#{inspect(formatted)})"
       end
     end
 
@@ -42,9 +53,11 @@ defmodule Icu.Number.LocaleCoverageTest do
     # 780 is below every locale's compact threshold, so it is the honest case.
     test "un-abbreviated values match standard notation" do
       for locale <- @locales do
-        assert {:ok, %{formatted: compact, displayed_value: 780}} =
-                 Number.format_compact(780, locale: locale, rounding_mode: :trunc),
-               "#{locale}: 780 was unexpectedly abbreviated"
+        assert {:ok, %{formatted: compact, displayed_value: displayed}} =
+                 Number.format_compact(780, locale: locale, rounding_mode: :trunc)
+
+        assert Decimal.equal?(displayed, Decimal.new(780)),
+               "#{locale}: 780 was unexpectedly abbreviated (#{Decimal.to_string(displayed)})"
 
         assert {:ok, standard} = Number.format(780, locale: locale, maximum_fraction_digits: 0)
 
@@ -72,48 +85,84 @@ defmodule Icu.Number.LocaleCoverageTest do
   #   - ar/el/tr/uk use their own thousand affixes with a no-break space.
   describe "distinctive compact strings" do
     test "CJK myriad grouping (万 / 만)" do
-      assert {:ok, %{formatted: "19万", displayed_value: 190_000}} =
-               Number.format_compact(194_438, locale: "zh-CN", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(194_438, locale: "zh-CN", rounding_mode: :trunc),
+        "19万",
+        190_000
+      )
 
-      assert {:ok, %{formatted: "19万", displayed_value: 190_000}} =
-               Number.format_compact(194_438, locale: "ja-JP", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(194_438, locale: "ja-JP", rounding_mode: :trunc),
+        "19万",
+        190_000
+      )
 
-      assert {:ok, %{formatted: "19만", displayed_value: 190_000}} =
-               Number.format_compact(194_438, locale: "ko-KR", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(194_438, locale: "ko-KR", rounding_mode: :trunc),
+        "19만",
+        190_000
+      )
     end
 
     test "myriad boundary at 10,000" do
-      assert {:ok, %{formatted: "1만", displayed_value: 10_000}} =
-               Number.format_compact(15_000, locale: "ko-KR", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(15_000, locale: "ko-KR", rounding_mode: :trunc),
+        "1만",
+        10_000
+      )
 
-      assert {:ok, %{formatted: "1万", displayed_value: 10_000}} =
-               Number.format_compact(15_000, locale: "zh-CN", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(15_000, locale: "zh-CN", rounding_mode: :trunc),
+        "1万",
+        10_000
+      )
     end
 
     test "zh-HK short compact uses Latin K/M, not 萬" do
-      assert {:ok, %{formatted: "194K", displayed_value: 194_000}} =
-               Number.format_compact(194_438, locale: "zh-HK", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(194_438, locale: "zh-HK", rounding_mode: :trunc),
+        "194K",
+        194_000
+      )
 
       # 15_000 stays "15K" rather than collapsing to a myriad unit.
-      assert {:ok, %{formatted: "15K", displayed_value: 15_000}} =
-               Number.format_compact(15_000, locale: "zh-HK", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(15_000, locale: "zh-HK", rounding_mode: :trunc),
+        "15K",
+        15_000
+      )
     end
 
     test "locale thousand affixes" do
-      assert {:ok, %{formatted: "194 ألف", displayed_value: 194_000}} =
-               Number.format_compact(194_438, locale: "ar", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(194_438, locale: "ar", rounding_mode: :trunc),
+        "194 ألف",
+        194_000
+      )
 
-      assert {:ok, %{formatted: "194 χιλ.", displayed_value: 194_000}} =
-               Number.format_compact(194_438, locale: "el-GR", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(194_438, locale: "el-GR", rounding_mode: :trunc),
+        "194 χιλ.",
+        194_000
+      )
 
-      assert {:ok, %{formatted: "194 B", displayed_value: 194_000}} =
-               Number.format_compact(194_438, locale: "tr-TR", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(194_438, locale: "tr-TR", rounding_mode: :trunc),
+        "194 B",
+        194_000
+      )
 
-      assert {:ok, %{formatted: "194 тис.", displayed_value: 194_000}} =
-               Number.format_compact(194_438, locale: "uk-UA", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(194_438, locale: "uk-UA", rounding_mode: :trunc),
+        "194 тис.",
+        194_000
+      )
 
-      assert {:ok, %{formatted: "194K", displayed_value: 194_000}} =
-               Number.format_compact(194_438, locale: "th-TH", rounding_mode: :trunc)
+      assert_compact(
+        Number.format_compact(194_438, locale: "th-TH", rounding_mode: :trunc),
+        "194K",
+        194_000
+      )
     end
   end
 end

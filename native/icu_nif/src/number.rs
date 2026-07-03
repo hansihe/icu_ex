@@ -281,13 +281,6 @@ pub(crate) fn number_format_compact<'a>(
         Err(_) => return Ok((atoms::error(), atoms::invalid_number()).encode(env)),
     };
 
-    // displayed_value is defined as the integer the abbreviation represents, so
-    // format_compact is integer-domain. Reject inputs with a nonzero fractional
-    // part (trailing fractional zeros, e.g. 6718.0, are still integer-valued).
-    if decimal.absolute.nonzero_magnitude_end() < 0 {
-        return Ok((atoms::error(), atoms::invalid_number()).encode(env));
-    }
-
     decimal.apply_sign_display(formatter_resource.config.sign_display);
 
     match format_compact(formatter, &decimal, formatter_resource.config.rounding_mode) {
@@ -302,9 +295,10 @@ pub(crate) fn number_format_compact<'a>(
 /// abbreviated string represents.
 ///
 /// The returned string pair is `(formatted, displayed_value)` where
-/// `displayed_value` is the plain integer (no grouping, no explicit `+`) that
-/// the compact string stands for. Callers compare it against the exact input to
-/// decide whether to append a localised "+".
+/// `displayed_value` is the exact numeric the compact string stands for, as a
+/// plain decimal string (no grouping, no explicit `+`) — the Elixir side parses
+/// it into a `Decimal`. Callers compare it against the input to decide whether
+/// to append a localised "+".
 ///
 /// With [`RoundingMode::HalfEven`] we defer to ICU4X's own rounding and read the
 /// resolved [`CompactDecimal`] back out. With [`RoundingMode::Trunc`] we pick the
@@ -344,10 +338,10 @@ fn format_compact(
     Ok((formatted, displayed_value(&compact)))
 }
 
-/// Recover the exact integer a [`CompactDecimal`] represents (significand scaled
+/// Recover the exact numeric a [`CompactDecimal`] represents (significand scaled
 /// back up by its exponent), rendered without grouping. A leading explicit `+`
-/// (from a `sign_display` setting) is stripped so the value parses as a plain
-/// integer on the Elixir side.
+/// (from a `sign_display` setting) is stripped so the value parses cleanly as a
+/// `Decimal` on the Elixir side.
 fn displayed_value(compact: &CompactDecimal) -> String {
     let mut value = compact.significand().clone();
     value.multiply_pow10(i16::from(compact.exponent()));

@@ -45,19 +45,26 @@ Icu.Number.format(194_438, locale: "ja", notation: :compact)
   `:trunc` the abbreviation never overstates the value: `6_718` shows as `"6K"`,
   never `"7K"`.
 
-`format_compact/2` additionally returns the exact integer the abbreviation
-stands for, so callers can tell when the display understates the value (for
-example, to append a localised "+"):
+`format_compact/2` also returns the exact numeric the abbreviation stands for as
+a `Decimal`, so callers can tell when the display understates the value — for
+example, to append a localised "+":
 
 ```elixir
-Icu.Number.format_compact(6_718, locale: "en", rounding_mode: :trunc)
-#=> {:ok, %{formatted: "6K", displayed_value: 6_000}}
+{:ok, %{formatted: formatted, displayed_value: displayed}} =
+  Icu.Number.format_compact(6_718, locale: "en", rounding_mode: :trunc)
+#=> formatted "6K", displayed Decimal.new("6000")
+
+case Decimal.compare(displayed, 6_718) do
+  :lt -> formatted <> "+"   # displayed understates the exact count
+  _ -> formatted
+end
+#=> "6K+"
 ```
 
-`format_compact/2` is integer-domain (its `:displayed_value` is an integer): it
-accepts integers and integer-valued floats/decimals and returns
-`{:error, :invalid_number}` for a value with a fractional part. Use `format/2`
-with `notation: :compact` to compact-format an arbitrary number for display only.
+It accepts the same inputs as `format/2` (integers, floats, `Decimal`s,
+including fractional values). Under `rounding_mode: :trunc` the abbreviation
+never overstates the input, so `Decimal.compare(displayed_value, input)` is
+always `:lt` or `:eq`.
 
 ### Percent
 

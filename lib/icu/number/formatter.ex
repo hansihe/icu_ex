@@ -41,7 +41,7 @@ defmodule Icu.Number.Formatter do
       when is_number(number) or is_struct(number) do
     case Nif.number_format_compact(resource, number) do
       {:ok, {formatted, displayed_value}} ->
-        {:ok, %{formatted: formatted, displayed_value: String.to_integer(displayed_value)}}
+        {:ok, %{formatted: formatted, displayed_value: Decimal.new(displayed_value)}}
 
       {:error, _reason} = error ->
         error
