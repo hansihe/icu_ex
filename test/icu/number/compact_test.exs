@@ -386,6 +386,171 @@ defmodule Icu.Number.CompactTest do
     end
   end
 
+  describe "fractional precision (maximum_fraction_digits)" do
+    test "trunc keeps the requested fraction digits and never rounds up" do
+      assert_compact(
+        Number.format_compact(1_150,
+          locale: "en",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "1.1K",
+        1_100
+      )
+
+      assert_compact(
+        Number.format_compact(15_400,
+          locale: "en",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "15.4K",
+        15_400
+      )
+
+      assert_compact(
+        Number.format_compact(194_438,
+          locale: "en",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "194.4K",
+        194_400
+      )
+    end
+
+    test "trunc floors at the requested precision (1199 -> 1.1K, never 1.2K)" do
+      assert_compact(
+        Number.format_compact(1_199,
+          locale: "en",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "1.1K",
+        1_100
+      )
+
+      # Two fraction digits: 1_199 -> 1.19K (truncated), not 1.20K.
+      assert_compact(
+        Number.format_compact(1_199,
+          locale: "en",
+          maximum_fraction_digits: 2,
+          rounding_mode: :trunc
+        ),
+        "1.19K",
+        1_190
+      )
+    end
+
+    test "half-even rounds to the requested precision" do
+      assert_compact(
+        Number.format_compact(1_150, locale: "en", maximum_fraction_digits: 1),
+        "1.2K",
+        1_200
+      )
+
+      assert_compact(
+        Number.format_compact(1_199, locale: "en", maximum_fraction_digits: 1),
+        "1.2K",
+        1_200
+      )
+
+      assert_compact(
+        Number.format_compact(15_400, locale: "en", maximum_fraction_digits: 1),
+        "15.4K",
+        15_400
+      )
+    end
+
+    test "trailing zeros are trimmed unless a minimum is requested" do
+      assert_compact(
+        Number.format_compact(2_000,
+          locale: "en",
+          maximum_fraction_digits: 2,
+          rounding_mode: :trunc
+        ),
+        "2K",
+        2_000
+      )
+    end
+
+    test "minimum_fraction_digits pads the significand" do
+      assert_compact(
+        Number.format_compact(2_000,
+          locale: "en",
+          maximum_fraction_digits: 2,
+          minimum_fraction_digits: 2,
+          rounding_mode: :trunc
+        ),
+        "2.00K",
+        2_000
+      )
+
+      assert_compact(
+        Number.format_compact(194_438,
+          locale: "en",
+          minimum_fraction_digits: 2,
+          rounding_mode: :trunc
+        ),
+        "194.00K",
+        194_000
+      )
+    end
+
+    test "displayed_value reflects the truncated-at-precision value" do
+      assert {:ok, %{displayed_value: dv}} =
+               Number.format_compact(1_199,
+                 locale: "en",
+                 maximum_fraction_digits: 1,
+                 rounding_mode: :trunc
+               )
+
+      assert Decimal.equal?(dv, Decimal.new(1_100))
+      assert Decimal.compare(dv, 1_199) == :lt
+    end
+
+    test "honours fraction digits across locales (ja 万, ru Cyrillic)" do
+      # ja truncates the 万-significand: 194438 / 10000 = 19.4438 -> 19.4万.
+      assert_compact(
+        Number.format_compact(194_438,
+          locale: "ja",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "19.4万",
+        194_000
+      )
+
+      # ru uses a comma decimal separator and a NO-BREAK SPACE before the suffix.
+      assert_compact(
+        Number.format_compact(1_150,
+          locale: "ru",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "1,1 тыс.",
+        1_100
+      )
+    end
+
+    test "absent fraction options leaves precision locale-driven (icu 0.6 behaviour)" do
+      # No maximum_fraction_digits: identical to the historical output.
+      assert_compact(
+        Number.format_compact(194_438, locale: "en", rounding_mode: :trunc),
+        "194K",
+        194_000
+      )
+
+      assert_compact(Number.format_compact(6_718, locale: "en"), "6.7K", 6_700)
+
+      assert_compact(
+        Number.format_compact(6_718, locale: "en", rounding_mode: :trunc),
+        "6K",
+        6_000
+      )
+    end
+  end
+
   describe "locale handling" do
     test "a malformed locale is rejected" do
       assert {:error, {:invalid_option_value, :locale}} =
