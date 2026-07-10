@@ -27,15 +27,37 @@ defmodule Icu.Number.CompactTest do
       assert_compact(Number.format_compact(6_718, locale: "en"), "6.7K", 6_700)
     end
 
-    test "trunc never rounds up and floors to whole units" do
+    test "trunc is directional only: same precision as half-even, never rounds up" do
+      # At 3 integer digits the default precision is already 0 fraction digits,
+      # so trunc and half-even agree on the digits shown.
       assert_compact(
         Number.format_compact(194_438, locale: "en", rounding_mode: :trunc),
         "194K",
         194_000
       )
 
+      # 6_718 keeps one fractional digit at the default precision; trunc floors
+      # that digit (6.7, never 6.8) rather than dropping to whole units.
       assert_compact(
         Number.format_compact(6_718, locale: "en", rounding_mode: :trunc),
+        "6.7K",
+        6_700
+      )
+
+      assert_compact(
+        Number.format_compact(6_780, locale: "en", rounding_mode: :trunc),
+        "6.7K",
+        6_700
+      )
+    end
+
+    test "a whole-unit floor is an explicit maximum_fraction_digits: 0" do
+      assert_compact(
+        Number.format_compact(6_718,
+          locale: "en",
+          maximum_fraction_digits: 0,
+          rounding_mode: :trunc
+        ),
         "6K",
         6_000
       )
@@ -97,15 +119,25 @@ defmodule Icu.Number.CompactTest do
       assert Decimal.equal?(dv, Decimal.new(3_000))
     end
 
-    test "trunc floors at the 万 boundary" do
+    test "trunc floors at the 万 boundary (with an explicit whole-unit precision)" do
+      # Directional trunc keeps the default 1.5万; a whole-unit floor is an
+      # explicit maximum_fraction_digits: 0.
       assert_compact(
-        Number.format_compact(15_000, locale: "ja", rounding_mode: :trunc),
+        Number.format_compact(15_000,
+          locale: "ja",
+          maximum_fraction_digits: 0,
+          rounding_mode: :trunc
+        ),
         "1万",
         10_000
       )
 
       assert_compact(
-        Number.format_compact(15_000, locale: "zh", rounding_mode: :trunc),
+        Number.format_compact(15_000,
+          locale: "zh",
+          maximum_fraction_digits: 0,
+          rounding_mode: :trunc
+        ),
         "1万",
         10_000
       )
@@ -223,10 +255,11 @@ defmodule Icu.Number.CompactTest do
         1_000
       )
 
+      # Directional trunc keeps the default fractional digit (9.999 -> 9.9).
       assert_compact(
         Number.format_compact(9_999, locale: "en", rounding_mode: :trunc),
-        "9K",
-        9_000
+        "9.9K",
+        9_900
       )
 
       assert_compact(
@@ -328,20 +361,20 @@ defmodule Icu.Number.CompactTest do
     test "accepts integer-valued floats and decimals" do
       assert_compact(
         Number.format_compact(6_718.0, locale: "en", rounding_mode: :trunc),
-        "6K",
-        6_000
+        "6.7K",
+        6_700
       )
 
       assert_compact(
         Number.format_compact(Decimal.new("6718"), locale: "en", rounding_mode: :trunc),
-        "6K",
-        6_000
+        "6.7K",
+        6_700
       )
 
       assert_compact(
         Number.format_compact(Decimal.new("6718.00"), locale: "en", rounding_mode: :trunc),
-        "6K",
-        6_000
+        "6.7K",
+        6_700
       )
     end
 
@@ -349,20 +382,21 @@ defmodule Icu.Number.CompactTest do
       # Un-abbreviated: half-even preserves the fraction and displayed matches it.
       assert_compact(Number.format_compact(5.5, locale: "en"), "5.5", Decimal.new("5.5"))
 
-      # Abbreviated + trunc: the significand truncates to whole units.
+      # Abbreviated + trunc: the significand floors at the default precision
+      # (6.7185 -> 6.7), never up to whole units.
       assert_compact(
         Number.format_compact(6_718.5, locale: "en", rounding_mode: :trunc),
-        "6K",
-        6_000
+        "6.7K",
+        6_700
       )
     end
 
     test "trunc at the compact boundary never overstates a fractional input" do
-      # 1234.5 truncates its significand (1.2345 -> 1), not up to "2K".
+      # 1234.5 floors its significand (1.2345 -> 1.2), never up to "1.3K"/"2K".
       assert_compact(
         Number.format_compact(1234.5, locale: "en", rounding_mode: :trunc),
-        "1K",
-        1_000
+        "1.2K",
+        1_200
       )
 
       # 999.9 stays below the K threshold — must NOT become "1K".
@@ -383,6 +417,259 @@ defmodule Icu.Number.CompactTest do
     test "format/2 with compact notation also accepts fractional numbers (string only)" do
       assert {:ok, "1.2K"} = Number.format(1234.5, locale: "en", notation: :compact)
       assert {:ok, "5.5"} = Number.format(5.5, locale: "en", notation: :compact)
+    end
+  end
+
+  describe "fractional precision (maximum_fraction_digits)" do
+    test "trunc keeps the requested fraction digits and never rounds up" do
+      assert_compact(
+        Number.format_compact(1_150,
+          locale: "en",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "1.1K",
+        1_100
+      )
+
+      assert_compact(
+        Number.format_compact(15_400,
+          locale: "en",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "15.4K",
+        15_400
+      )
+
+      assert_compact(
+        Number.format_compact(194_438,
+          locale: "en",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "194.4K",
+        194_400
+      )
+    end
+
+    test "trunc floors at the requested precision (1199 -> 1.1K, never 1.2K)" do
+      assert_compact(
+        Number.format_compact(1_199,
+          locale: "en",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "1.1K",
+        1_100
+      )
+
+      # Two fraction digits: 1_199 -> 1.19K (truncated), not 1.20K.
+      assert_compact(
+        Number.format_compact(1_199,
+          locale: "en",
+          maximum_fraction_digits: 2,
+          rounding_mode: :trunc
+        ),
+        "1.19K",
+        1_190
+      )
+    end
+
+    test "half-even rounds to the requested precision" do
+      assert_compact(
+        Number.format_compact(1_150, locale: "en", maximum_fraction_digits: 1),
+        "1.2K",
+        1_200
+      )
+
+      assert_compact(
+        Number.format_compact(1_199, locale: "en", maximum_fraction_digits: 1),
+        "1.2K",
+        1_200
+      )
+
+      assert_compact(
+        Number.format_compact(15_400, locale: "en", maximum_fraction_digits: 1),
+        "15.4K",
+        15_400
+      )
+    end
+
+    test "trailing zeros are trimmed unless a minimum is requested" do
+      assert_compact(
+        Number.format_compact(2_000,
+          locale: "en",
+          maximum_fraction_digits: 2,
+          rounding_mode: :trunc
+        ),
+        "2K",
+        2_000
+      )
+    end
+
+    test "minimum_fraction_digits pads the significand" do
+      assert_compact(
+        Number.format_compact(2_000,
+          locale: "en",
+          maximum_fraction_digits: 2,
+          minimum_fraction_digits: 2,
+          rounding_mode: :trunc
+        ),
+        "2.00K",
+        2_000
+      )
+
+      # Minimum only ⇒ maximum defaults to max(min, 3), so real digits survive
+      # instead of being floored to whole units and padded with fake zeros.
+      assert_compact(
+        Number.format_compact(194_438,
+          locale: "en",
+          minimum_fraction_digits: 2,
+          rounding_mode: :trunc
+        ),
+        "194.438K",
+        194_438
+      )
+    end
+
+    test "displayed_value reflects the truncated-at-precision value" do
+      assert {:ok, %{displayed_value: dv}} =
+               Number.format_compact(1_199,
+                 locale: "en",
+                 maximum_fraction_digits: 1,
+                 rounding_mode: :trunc
+               )
+
+      assert Decimal.equal?(dv, Decimal.new(1_100))
+      assert Decimal.compare(dv, 1_199) == :lt
+    end
+
+    test "honours fraction digits across locales (ja 万, ru Cyrillic)" do
+      # ja truncates the 万-significand: 194438 / 10000 = 19.4438 -> 19.4万.
+      assert_compact(
+        Number.format_compact(194_438,
+          locale: "ja",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "19.4万",
+        194_000
+      )
+
+      # ru uses a comma decimal separator and a NO-BREAK SPACE before the suffix.
+      assert_compact(
+        Number.format_compact(1_150,
+          locale: "ru",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "1,1 тыс.",
+        1_100
+      )
+    end
+
+    test "absent fraction options use the 1-2 significant digit default" do
+      # No fraction options: the CLDR/Intl compact default (1-2 significant
+      # digits of the significand), identical to the historical half-even output.
+      assert_compact(
+        Number.format_compact(194_438, locale: "en", rounding_mode: :trunc),
+        "194K",
+        194_000
+      )
+
+      assert_compact(Number.format_compact(6_718, locale: "en"), "6.7K", 6_700)
+
+      # trunc is directional: it floors the same fractional digit half-even keeps.
+      assert_compact(
+        Number.format_compact(6_718, locale: "en", rounding_mode: :trunc),
+        "6.7K",
+        6_700
+      )
+    end
+
+    test "maximum_fraction_digits: :unbounded emits every significand digit" do
+      assert_compact(
+        Number.format_compact(1234.5678, locale: "en", maximum_fraction_digits: :unbounded),
+        "1.2345678K",
+        Decimal.new("1234.5678")
+      )
+    end
+  end
+
+  describe "magnitude-boundary carry (half-even)" do
+    test "half-even carry across K→M resolves to the higher magnitude" do
+      # Rounding carries the significand up to 1000K = 1M; the exponent must be
+      # re-picked so ICU4X does not reject a significand/exponent mismatch.
+      # 999_950 only carries at 1 digit (999.95 is exact at 2 digits); 999_999
+      # carries at both.
+      assert_compact(
+        Number.format_compact(999_950, locale: "en", maximum_fraction_digits: 1),
+        "1M",
+        1_000_000
+      )
+
+      assert_compact(
+        Number.format_compact(999_950, locale: "en", maximum_fraction_digits: 2),
+        "999.95K",
+        999_950
+      )
+
+      for max <- [1, 2] do
+        assert_compact(
+          Number.format_compact(999_999, locale: "en", maximum_fraction_digits: max),
+          "1M",
+          1_000_000
+        )
+      end
+    end
+
+    test "trunc never carries at the boundary" do
+      assert_compact(
+        Number.format_compact(999_950,
+          locale: "en",
+          maximum_fraction_digits: 1,
+          rounding_mode: :trunc
+        ),
+        "999.9K",
+        999_900
+      )
+
+      assert_compact(
+        Number.format_compact(999_999,
+          locale: "en",
+          maximum_fraction_digits: 2,
+          rounding_mode: :trunc
+        ),
+        "999.99K",
+        999_990
+      )
+    end
+
+    test "boundary carry in a non-en locale (ja 万 step of 4)" do
+      # ja abbreviates by 万 (10^4): 9_999_500 is 999.95万; rounding to 1 digit
+      # carries to 1000万 (still 万, not the next 億 bucket at 10^8).
+      assert_compact(
+        Number.format_compact(9_999_500, locale: "ja", maximum_fraction_digits: 1),
+        "1,000万",
+        10_000_000
+      )
+    end
+  end
+
+  describe "negative values" do
+    test "trunc toward zero overstates a negative magnitude (documented caveat)" do
+      # For negatives, toward-zero truncation moves the value UP: -6718 at 0
+      # digits displays -6000, which is greater than the input.
+      assert {:ok, %{formatted: "-6K", displayed_value: dv}} =
+               Number.format_compact(-6_718,
+                 locale: "en",
+                 maximum_fraction_digits: 0,
+                 rounding_mode: :trunc
+               )
+
+      assert Decimal.equal?(dv, Decimal.new(-6_000))
+      assert Decimal.compare(dv, -6_718) == :gt
     end
   end
 

@@ -21,7 +21,19 @@ defmodule Icu.Number do
   - `:sign_display` – control sign rendering (`:auto`, `:always`, `:never`, `:except_zero`, `:negative`).
   - `:minimum_integer_digits` – left-pad with zeros to hit a minimum integer width.
   - `:minimum_fraction_digits` – right-pad with zeros to ensure fractional precision.
-  - `:maximum_fraction_digits` – clamp or round fractional precision.
+    Under `:compact` notation this pads the abbreviated significand (`2000` →
+    `"2.00K"` at 2 digits). Providing only a minimum implies
+    `maximum_fraction_digits = max(minimum, default)` (the `Intl.NumberFormat`
+    rule; the default is 3 for decimal, 0 for percent), so real digits are never
+    rounded away and replaced with padding: `194438` at
+    `minimum_fraction_digits: 2` is `"194.438K"`, not `"194.00K"`, and
+    `format(1.23456, minimum_fraction_digits: 4)` is `"1.2346"`, not `"1.2350"`.
+  - `:maximum_fraction_digits` – clamp fractional precision (`:unbounded` means
+    no maximum: emit every digit). Under `:compact` notation this sets the
+    precision of the abbreviated significand (`15400` → `"15.4K"` at 1 digit),
+    honouring `:rounding_mode`. When neither fraction option is given, compact
+    precision defaults to 1–2 significant digits of the significand (the
+    CLDR/`Intl` compact default: `6718` → `"6.7K"`, `15400` → `"15K"`).
   - `:style` – `:decimal` (default) or `:percent`. Percent follows `Intl.NumberFormat`
     semantics: the input is a **ratio** and is multiplied by 100 (`0.5` → `"50%"`), with
     locale-correct placement (`tr` → `"%50"`, `fr` → `"50 %"`). Cannot be combined with
@@ -30,12 +42,24 @@ defmodule Icu.Number do
     (`194438` → `"194K"`, Japanese/Chinese group by 万). See `format_compact/2`.
   - `:compact_display` – `:short` (default, e.g. `"194K"`) or `:long` (e.g. `"194 thousand"`),
     only meaningful with `notation: :compact`.
-  - `:rounding_mode` – `:half_even` (default) or `:trunc`. With `:trunc`, compact output
-    never overstates the value (`6_718` → `"6K"`, never `"7K"`).
+  - `:rounding_mode` – `:half_even` (default) or `:trunc`. Purely directional:
+    it changes only the rounding direction, never the precision, and applies to
+    both `:standard` and `:compact` notation. At the same precision, `:trunc`
+    floors toward zero where `:half_even` rounds to nearest (`6780` → `"6.8K"`
+    half-even, `"6.7K"` trunc; `format(1.99, maximum_fraction_digits: 1,
+    rounding_mode: :trunc)` → `"1.9"`). For a non-negative value, truncation
+    never overstates the magnitude, so a badge-style whole-unit floor is
+    `maximum_fraction_digits: 0, rounding_mode: :trunc` (`6718` → `"6K"`). For a
+    negative input, toward-zero truncation moves the value up (`-6718` at 0
+    digits → `"-6K"`, i.e. `-6000 > -6718`); the never-overstates guarantee is
+    about magnitude / non-negative inputs.
   - `:locale` – override the locale for this invocation.
 
-  `:minimum_integer_digits`, `:minimum_fraction_digits` and `:maximum_fraction_digits`
-  only apply to `:standard` notation; compact precision is locale-driven.
+  `:minimum_integer_digits` only applies to `:standard` notation.
+  `:minimum_fraction_digits` and `:maximum_fraction_digits` apply to both
+  notations; under `:compact` they bound the fraction digits of the abbreviated
+  significand, and when neither is given precision defaults to 1–2 significant
+  digits of the significand.
   """
 
   alias Icu.LanguageTag
@@ -78,7 +102,7 @@ defmodule Icu.Number do
             | {:sign_display, sign_display()}
             | {:minimum_integer_digits, pos_integer()}
             | {:minimum_fraction_digits, non_neg_integer()}
-            | {:maximum_fraction_digits, non_neg_integer() | nil}
+            | {:maximum_fraction_digits, non_neg_integer() | :unbounded}
             | {:style, style()}
             | {:notation, notation()}
             | {:compact_display, compact_display()}
@@ -93,7 +117,7 @@ defmodule Icu.Number do
             optional(:sign_display) => sign_display(),
             optional(:minimum_integer_digits) => pos_integer(),
             optional(:minimum_fraction_digits) => non_neg_integer(),
-            optional(:maximum_fraction_digits) => non_neg_integer() | nil,
+            optional(:maximum_fraction_digits) => non_neg_integer() | :unbounded,
             optional(:style) => style(),
             optional(:notation) => notation(),
             optional(:compact_display) => compact_display(),
@@ -158,8 +182,12 @@ defmodule Icu.Number do
 
   Always uses `notation: :compact` (any `:notation` in `options` is ignored).
   Accepts the same inputs as `format/2` (integers, floats, `Decimal`s, including
-  fractional values); `:compact_display` and `:rounding_mode` are the relevant
-  knobs.
+  fractional values); `:compact_display`, `:rounding_mode`,
+  `:maximum_fraction_digits` and `:minimum_fraction_digits` are the relevant
+  knobs. When no fraction option is given, precision defaults to 1–2 significant
+  digits of the abbreviated significand (`6718` → `"6.7K"`, `15400` → `"15K"`);
+  `:maximum_fraction_digits` overrides that (`15400` → `"15.4K"` at 1 digit),
+  honouring `:rounding_mode`.
 
   `:displayed_value` is a `Decimal` giving the exact numeric the abbreviation
   denotes. Compare it against the input to detect when the display understates
@@ -168,12 +196,14 @@ defmodule Icu.Number do
       iex> {:ok, %{formatted: formatted, displayed_value: displayed}} =
       ...>   Icu.Number.format_compact(6_718, locale: "en", rounding_mode: :trunc)
       iex> formatted
-      "6K"
+      "6.7K"
       iex> Decimal.compare(displayed, 6_718)
       :lt
 
-  Under `rounding_mode: :trunc` the abbreviation never overstates the input, so
-  `Decimal.compare(displayed_value, input)` is always `:lt` or `:eq`.
+  For a non-negative input, truncation never overstates the magnitude, so
+  `Decimal.compare(displayed_value, input)` is `:lt` or `:eq` under
+  `rounding_mode: :trunc`. (For a negative input, toward-zero truncation moves
+  the value up instead.)
 
   ## Examples
 
@@ -184,6 +214,32 @@ defmodule Icu.Number do
       iex> {:ok, result} = Icu.Number.format_compact(780, locale: "en")
       iex> {result.formatted, Decimal.to_string(result.displayed_value)}
       {"780", "780"}
+
+      iex> # rounding_mode is directional only; trunc keeps the default precision
+      iex> {:ok, result} = Icu.Number.format_compact(6_718, locale: "en", rounding_mode: :trunc)
+      iex> {result.formatted, Decimal.to_string(result.displayed_value)}
+      {"6.7K", "6700"}
+
+      iex> # for a badge-style whole-unit floor, ask for 0 fraction digits explicitly
+      iex> {:ok, result} =
+      ...>   Icu.Number.format_compact(6_718,
+      ...>     locale: "en",
+      ...>     maximum_fraction_digits: 0,
+      ...>     rounding_mode: :trunc
+      ...>   )
+      iex> {result.formatted, Decimal.to_string(result.displayed_value)}
+      {"6K", "6000"}
+
+      iex> # maximum_fraction_digits sets the abbreviated significand precision;
+      iex> # trunc floors it (1199 -> "1.1K", never "1.2K")
+      iex> {:ok, result} =
+      ...>   Icu.Number.format_compact(1_199,
+      ...>     locale: "en",
+      ...>     maximum_fraction_digits: 1,
+      ...>     rounding_mode: :trunc
+      ...>   )
+      iex> {result.formatted, Decimal.to_string(result.displayed_value)}
+      {"1.1K", "1100"}
 
       iex> # fractional inputs are accepted; the Decimal denotes the string exactly
       iex> {:ok, result} = Icu.Number.format_compact(5.5, locale: "en")

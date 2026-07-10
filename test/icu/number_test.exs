@@ -195,6 +195,41 @@ defmodule Icu.NumberTest do
       assert {:ok, formatted} = Number.format(3.14, minimum_integer_digits: 4)
       assert is_binary(formatted)
     end
+
+    test "rounding_mode is honoured under standard notation" do
+      # Half-even (default) rounds to nearest; trunc floors toward zero at the
+      # same precision (§2.3).
+      assert {:ok, "2.0"} = Number.format(1.99, locale: "en", maximum_fraction_digits: 1)
+
+      assert {:ok, "1.9"} =
+               Number.format(1.99,
+                 locale: "en",
+                 maximum_fraction_digits: 1,
+                 rounding_mode: :trunc
+               )
+    end
+
+    test "maximum_fraction_digits: :unbounded emits every digit" do
+      assert {:ok, "42.10"} =
+               Number.format(Decimal.new("42.10"),
+                 locale: "en",
+                 maximum_fraction_digits: :unbounded
+               )
+    end
+
+    test "minimum-only fraction digits keep real digits (max defaults to max(min, 3))" do
+      # ECMA-402 SetNumberFormatDigitOptions: mxfd = max(mnfd, 3). A minimum
+      # above the decimal default must not round at 3 and pad fake zeros.
+      assert {:ok, "1.2346"} =
+               Number.format(1.23456, locale: "en", minimum_fraction_digits: 4)
+
+      assert {:ok, "1.23456"} =
+               Number.format(1.23456, locale: "en", minimum_fraction_digits: 5)
+
+      # At or below the default the historical behaviour is unchanged.
+      assert {:ok, "1.50"} = Number.format(1.5, locale: "en", minimum_fraction_digits: 2)
+      assert {:ok, "1.235"} = Number.format(1.23456, locale: "en", minimum_fraction_digits: 2)
+    end
   end
 
   describe "combined options" do
@@ -344,7 +379,9 @@ defmodule Icu.NumberTest do
     end
 
     test "preserves Decimal precision" do
-      assert {:ok, formatted} = Number.format(Decimal.new("42.10"), maximum_fraction_digits: nil)
+      assert {:ok, formatted} =
+               Number.format(Decimal.new("42.10"), maximum_fraction_digits: :unbounded)
+
       assert formatted =~ "42.10"
     end
 

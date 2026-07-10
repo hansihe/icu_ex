@@ -41,9 +41,12 @@ Icu.Number.format(194_438, locale: "ja", notation: :compact)
 ```
 
 - `:compact_display` — `:short` (default, `"194K"`) or `:long` (`"194 thousand"`).
-- `:rounding_mode` — `:half_even` (default, matching ICU4X) or `:trunc`. With
-  `:trunc` the abbreviation never overstates the value: `6_718` shows as `"6K"`,
-  never `"7K"`.
+- `:rounding_mode` — `:half_even` (default, matching ICU4X) or `:trunc`. Purely
+  directional: at the same precision, `:trunc` floors toward zero where
+  `:half_even` rounds to nearest (`6_780` → `"6.8K"` half-even, `"6.7K"` trunc).
+  For a badge-style whole-unit floor, ask for it explicitly with
+  `maximum_fraction_digits: 0, rounding_mode: :trunc` (`6_718` → `"6K"`, never
+  `"7K"`).
 
 `format_compact/2` also returns the exact numeric the abbreviation stands for as
 a `Decimal`, so callers can tell when the display understates the value — for
@@ -51,7 +54,11 @@ example, to append a localised "+":
 
 ```elixir
 {:ok, %{formatted: formatted, displayed_value: displayed}} =
-  Icu.Number.format_compact(6_718, locale: "en", rounding_mode: :trunc)
+  Icu.Number.format_compact(6_718,
+    locale: "en",
+    maximum_fraction_digits: 0,
+    rounding_mode: :trunc
+  )
 #=> formatted "6K", displayed Decimal.new("6000")
 
 case Decimal.compare(displayed, 6_718) do
@@ -62,9 +69,11 @@ end
 ```
 
 It accepts the same inputs as `format/2` (integers, floats, `Decimal`s,
-including fractional values). Under `rounding_mode: :trunc` the abbreviation
-never overstates the input, so `Decimal.compare(displayed_value, input)` is
-always `:lt` or `:eq`.
+including fractional values). For a non-negative input under
+`rounding_mode: :trunc` the abbreviation never overstates it, so
+`Decimal.compare(displayed_value, input)` is `:lt` or `:eq`. (For a negative
+input, toward-zero truncation moves the value up instead: `-6_718` at 0 digits
+shows `"-6K"`, and `-6000 > -6718`.)
 
 ### Percent
 
