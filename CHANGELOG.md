@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-10
+
+## What's Changed
+* Fraction-digit control for compact notation, with directional rounding by @hansihe in https://github.com/hansihe/icu_ex/pull/7
+
+
+**Full Changelog**: https://github.com/hansihe/icu_ex/compare/v0.6.0...v0.7.0
+
 ### Changed
 
 - Compact notation now honours fraction digit settings, with precision
