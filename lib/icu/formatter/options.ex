@@ -162,6 +162,13 @@ defmodule Icu.Formatter.Options do
     {:ok, value}
   end
 
+  # No maximum: emit every fraction digit. Distinct from omitting the option,
+  # which keeps the style default (`max(min, 3)` decimal, `max(min, 0)` percent,
+  # 1-2 significant digits compact).
+  def normalize_option(:number, :maximum_fraction_digits, :unbounded) do
+    {:ok, :unbounded}
+  end
+
   def normalize_option(:number, :style, value) when value in [:decimal, :percent] do
     {:ok, value}
   end

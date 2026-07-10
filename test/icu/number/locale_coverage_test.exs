@@ -105,14 +105,24 @@ defmodule Icu.Number.LocaleCoverageTest do
     end
 
     test "myriad boundary at 10,000" do
+      # A whole-unit floor at the myriad boundary is maximum_fraction_digits: 0;
+      # directional trunc alone keeps the default 1.5 significand.
       assert_compact(
-        Number.format_compact(15_000, locale: "ko-KR", rounding_mode: :trunc),
+        Number.format_compact(15_000,
+          locale: "ko-KR",
+          maximum_fraction_digits: 0,
+          rounding_mode: :trunc
+        ),
         "1만",
         10_000
       )
 
       assert_compact(
-        Number.format_compact(15_000, locale: "zh-CN", rounding_mode: :trunc),
+        Number.format_compact(15_000,
+          locale: "zh-CN",
+          maximum_fraction_digits: 0,
+          rounding_mode: :trunc
+        ),
         "1万",
         10_000
       )

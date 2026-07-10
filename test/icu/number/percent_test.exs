@@ -25,6 +25,36 @@ defmodule Icu.Number.PercentTest do
                Number.format(0.505, locale: "en-US", style: :percent, maximum_fraction_digits: 1)
     end
 
+    test "rounding_mode is directional for percent too" do
+      # 0.199 -> 19.9%; half-even rounds to 20%, trunc floors to 19% (§2.3).
+      assert {:ok, "20%"} = Number.format(0.199, locale: "en-US", style: :percent)
+
+      assert {:ok, "19%"} =
+               Number.format(0.199, locale: "en-US", style: :percent, rounding_mode: :trunc)
+    end
+
+    test "minimum-only fraction digits keep real digits (max defaults to max(min, 0))" do
+      # ECMA-402: percent's mxfd default is 0, so mxfd = max(mnfd, 0) = mnfd.
+      # A minimum must not round the ratio at 0 digits and pad fake zeros.
+      assert {:ok, "12.35%"} =
+               Number.format(0.123456,
+                 locale: "en-US",
+                 style: :percent,
+                 minimum_fraction_digits: 2
+               )
+
+      assert {:ok, "123.4560%"} =
+               Number.format(1.23456,
+                 locale: "en-US",
+                 style: :percent,
+                 minimum_fraction_digits: 4
+               )
+
+      # Zero-padding still applies when the value has no real digits there.
+      assert {:ok, "50.00%"} =
+               Number.format(0.5, locale: "en-US", style: :percent, minimum_fraction_digits: 2)
+    end
+
     test "negative ratios keep the sign" do
       assert {:ok, "-50%"} = Number.format(-0.5, locale: "en-US", style: :percent)
     end

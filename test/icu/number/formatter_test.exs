@@ -4,9 +4,14 @@ defmodule Icu.Number.FormatterTest do
   alias Icu.Number.Formatter
 
   describe "normalize_options/1" do
-    test "removes nil maximum fraction digits" do
-      assert {:ok, %{}} =
-               Formatter.normalize_options(maximum_fraction_digits: nil)
+    test "drops nil maximum fraction digits like any other unset option" do
+      assert {:ok, options} = Formatter.normalize_options(maximum_fraction_digits: nil)
+      refute Map.has_key?(options, :maximum_fraction_digits)
+    end
+
+    test "keeps :unbounded maximum fraction digits as an explicit no-maximum request" do
+      assert {:ok, %{maximum_fraction_digits: :unbounded}} =
+               Formatter.normalize_options(maximum_fraction_digits: :unbounded)
     end
 
     test "drops nil locale entries" do

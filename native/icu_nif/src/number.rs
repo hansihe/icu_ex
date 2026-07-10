@@ -55,13 +55,30 @@ enum RoundingMode {
     Trunc,
 }
 
+/// How the abbreviated significand's precision is resolved under compact
+/// notation. Decided once at formatter construction (§2.1 of the redesign) so
+/// the formatting loop never re-derives a "was it set?" boolean.
+#[derive(Clone, Copy)]
+enum CompactPrecision {
+    /// Intl/CLDR compact default: 1–2 significant digits of the significand,
+    /// never below 0 fraction digits, trailing zeros trimmed. Identical to
+    /// `CompactDecimalFormatter::format_fixed_decimal` for significands ≥ 1.
+    SignificantDefault,
+    /// Explicit fraction digits requested by the caller. `max == None` means
+    /// unbounded (caller passed `maximum_fraction_digits: :unbounded`).
+    Fixed { min: u16, max: Option<u16> },
+}
+
 #[derive(Clone)]
 struct FormatterConfig {
     minimum_integer_digits: u16,
     minimum_fraction_digits: u16,
+    // Effective maximum fraction digits; `None` means unbounded. When the
+    // caller gives no maximum this is resolved at decode time to
+    // `max(min, style default)` (3 for decimal, 0 for percent).
     maximum_fraction_digits: Option<u16>,
-    // Whether the caller set maximum_fraction_digits explicitly. Percent style
-    // defaults to 0 fraction digits (Intl semantics) when it was left unset.
+    // Whether the caller set maximum_fraction_digits explicitly, as opposed to
+    // the resolved default above. Drives validation and the compact default.
     maximum_fraction_digits_set: bool,
     grouping_strategy: GroupingStrategy,
     sign_display: SignDisplay,
@@ -69,6 +86,9 @@ struct FormatterConfig {
     style: Style,
     compact_display: CompactDisplay,
     rounding_mode: RoundingMode,
+    // Resolved compact-significand precision. Only consulted under compact
+    // notation; the fraction-digit fields above still drive standard/percent.
+    compact_precision: CompactPrecision,
 }
 
 impl Default for FormatterConfig {
@@ -84,6 +104,7 @@ impl Default for FormatterConfig {
             style: Style::Decimal,
             compact_display: CompactDisplay::Short,
             rounding_mode: RoundingMode::HalfEven,
+            compact_precision: CompactPrecision::SignificantDefault,
         }
     }
 }
@@ -244,14 +265,10 @@ pub(crate) fn number_format<'a>(
         }
         FormatterKind::Percent(formatter) => {
             // Intl semantics: the input is a ratio, so scale by 100 (0.5 -> 50%).
+            // The percent default of 0 fraction digits is already resolved into
+            // `maximum_fraction_digits` at construction time.
             decimal.multiply_pow10(2);
-            let mut config = formatter_resource.config.clone();
-            // Intl percent defaults to 0 fraction digits unless the caller asked
-            // for more; without this the shared decimal default (3) yields "50.000%".
-            if !config.maximum_fraction_digits_set {
-                config.maximum_fraction_digits = Some(0);
-            }
-            apply_config(&mut decimal, &config);
+            apply_config(&mut decimal, &formatter_resource.config);
             let formatted = formatter.format(&decimal).to_string();
             Ok((atoms::ok(), formatted).encode(env))
         }
@@ -300,73 +317,90 @@ pub(crate) fn number_format_compact<'a>(
 /// it into a `Decimal`. Callers compare it against the input to decide whether
 /// to append a localised "+".
 ///
-/// Precision is locale-driven by default. When the caller sets
-/// `maximum_fraction_digits` (or a non-zero `minimum_fraction_digits`), the
-/// compact significand is resolved at that fixed precision instead.
+/// Precision follows `config.compact_precision` (§2.1): the Intl/CLDR
+/// significant-digit default when the caller gave no fraction options, or an
+/// explicit fraction-digit range otherwise. `config.rounding_mode` is purely
+/// directional — half-even rounds, trunc floors toward zero — and applies at
+/// whichever precision is in effect. Truncation toward zero never overstates a
+/// non-negative value's magnitude (`6_718` at 0 digits -> `"6K"`, never `"7K"`).
 ///
-/// With locale-driven precision under [`RoundingMode::HalfEven`] we defer to
-/// ICU4X's own rounding and read the resolved [`CompactDecimal`] back out.
-/// Otherwise we pick the locale's compact exponent for the value's magnitude,
-/// round or truncate the significand to the requested fraction digits ourselves,
-/// and hand ICU4X a fully-resolved [`CompactDecimal`] via `format_compact_decimal`,
-/// which performs no rounding of its own. Truncation is towards zero so the
-/// abbreviation never overstates the value (`1_199` at 1 digit -> `"1.1K"`,
-/// never `"1.2K"`; `6_718` at 0 digits -> `"6K"`, never `"7K"`).
+/// A single path picks the locale's compact exponent for the value's magnitude,
+/// rounds/truncates the significand ourselves, then hands ICU4X a fully-resolved
+/// [`CompactDecimal`] via `format_compact_decimal` (which performs no rounding of
+/// its own and errors on a significand/exponent mismatch). Half-even rounding can
+/// carry the significand across a magnitude boundary (`999.95 → 1000`); the loop
+/// re-picks the exponent and re-rounds from the original value until stable
+/// (`999_950` at 1 digit -> `"1M"`), which keeps `format_compact_decimal` from
+/// ever seeing an inconsistent significand/exponent pair.
 fn format_compact(
     formatter: &CompactDecimalFormatter,
     value: &FixedDecimal,
     config: &FormatterConfig,
 ) -> Result<(String, String), ()> {
-    let min_fraction = config.minimum_fraction_digits;
-    // Fraction digits only take effect when explicitly requested; otherwise
-    // precision stays locale-driven exactly as before.
-    let fixed_precision = config.maximum_fraction_digits_set || min_fraction > 0;
+    let magnitude = value.absolute.nonzero_magnitude_start();
+    let mut exponent = formatter.compact_exponent_for_magnitude(magnitude);
 
-    let (formatted, compact) =
-        if !fixed_precision && matches!(config.rounding_mode, RoundingMode::HalfEven) {
-            let formatted = formatter.format_fixed_decimal(value);
-            (
-                formatted.to_string(),
-                formatted.get_compact_decimal().clone(),
-            )
-        } else {
-            let magnitude = value.absolute.nonzero_magnitude_start();
-            let exponent = formatter.compact_exponent_for_magnitude(magnitude);
+    // Resolve the significand at the current exponent, re-picking the exponent
+    // if rounding carried across a magnitude boundary. Trunc never carries;
+    // half-even carries at most once, so this converges within two iterations
+    // (the third is a safety stop).
+    let mut significand = value.clone();
+    for _ in 0..3 {
+        // Restart from the original value each pass: rounding an
+        // already-rounded significand can compound error.
+        significand = value.clone();
+        significand.multiply_pow10(-i16::from(exponent));
 
-            let mut significand = value.clone();
-            significand.multiply_pow10(-i16::from(exponent));
-
-            // Absent an explicit maximum, fall back to whole units — the historical
-            // trunc behaviour. `None` means unbounded (no maximum-driven rounding).
-            let max_fraction = if config.maximum_fraction_digits_set {
-                config.maximum_fraction_digits
-            } else {
-                Some(0)
-            };
-
-            if let Some(max) = max_fraction {
+        match config.compact_precision {
+            CompactPrecision::SignificantDefault => {
+                // 2 significant digits: one fractional digit when the
+                // significand has a single integer digit, none otherwise,
+                // floored at 0. Matches `format_fixed_decimal` for
+                // significands ≥ 1 (sub-1 significands keep 2 digits, per Intl).
+                let sig_magnitude = significand.absolute.nonzero_magnitude_start();
+                let digits = (1 - sig_magnitude).max(0);
+                round_significand(&mut significand, digits, config.rounding_mode);
+            }
+            CompactPrecision::Fixed { max: Some(max), .. } => {
                 if let Ok(digits) = i16::try_from(max) {
-                    match config.rounding_mode {
-                        RoundingMode::Trunc => significand.trunc(-digits),
-                        RoundingMode::HalfEven => significand.round(-digits),
-                    }
+                    round_significand(&mut significand, digits, config.rounding_mode);
                 }
             }
+            // Unbounded maximum: emit every digit, no rounding step.
+            CompactPrecision::Fixed { max: None, .. } => {}
+        }
 
-            significand.absolute.trim_end();
+        let new_magnitude = significand.absolute.nonzero_magnitude_start() + i16::from(exponent);
+        let new_exponent = formatter.compact_exponent_for_magnitude(new_magnitude);
+        if new_exponent == exponent {
+            break;
+        }
+        exponent = new_exponent;
+    }
 
-            if let Ok(digits) = i16::try_from(min_fraction) {
-                if digits > 0 {
-                    significand.absolute.pad_end(-digits);
-                }
+    significand.absolute.trim_end();
+
+    if let CompactPrecision::Fixed { min, .. } = config.compact_precision {
+        if let Ok(digits) = i16::try_from(min) {
+            if digits > 0 {
+                significand.absolute.pad_end(-digits);
             }
+        }
+    }
 
-            let compact = CompactDecimal::from_significand_and_exponent(significand, exponent);
-            let formatted = formatter.format_compact_decimal(&compact).map_err(|_| ())?;
-            (formatted.to_string(), compact)
-        };
+    let compact = CompactDecimal::from_significand_and_exponent(significand, exponent);
+    let formatted = formatter.format_compact_decimal(&compact).map_err(|_| ())?;
 
-    Ok((formatted, displayed_value(&compact)))
+    Ok((formatted.to_string(), displayed_value(&compact)))
+}
+
+/// Round the compact significand in place at `digits` fraction digits, honouring
+/// the rounding direction: half-even rounds to nearest, trunc floors toward zero.
+fn round_significand(significand: &mut FixedDecimal, digits: i16, rounding_mode: RoundingMode) {
+    match rounding_mode {
+        RoundingMode::Trunc => significand.trunc(-digits),
+        RoundingMode::HalfEven => significand.round(-digits),
+    }
 }
 
 /// Recover the exact numeric a [`CompactDecimal`] represents (significand scaled
@@ -442,6 +476,7 @@ fn decode_formatter_config<'a>(term: Term<'a>) -> Result<FormatterConfig, ()> {
     }
 
     let mut config = FormatterConfig::default();
+    let mut minimum_fraction_digits_set = false;
     let iter = MapIterator::new(term).ok_or(())?;
 
     for (key_term, value_term) in iter {
@@ -453,6 +488,7 @@ fn decode_formatter_config<'a>(term: Term<'a>) -> Result<FormatterConfig, ()> {
             }
             config.minimum_integer_digits = value as u16;
         } else if key == atoms::minimum_fraction_digits() {
+            minimum_fraction_digits_set = true;
             let value: i64 = value_term.decode().map_err(|_| ())?;
             if value < 0 || value > i64::from(i16::MAX) {
                 return Err(());
@@ -463,11 +499,12 @@ fn decode_formatter_config<'a>(term: Term<'a>) -> Result<FormatterConfig, ()> {
 
             if value_term.get_type() == TermType::Atom {
                 if let Ok(atom_name) = value_term.atom_to_string() {
-                    if atom_name == "nil" {
+                    if atom_name == "unbounded" {
                         config.maximum_fraction_digits = None;
                         continue;
                     }
                 }
+                return Err(());
             }
 
             let value: i64 = value_term.decode().map_err(|_| ())?;
@@ -527,11 +564,43 @@ fn decode_formatter_config<'a>(term: Term<'a>) -> Result<FormatterConfig, ()> {
         }
     }
 
-    if let Some(max) = config.maximum_fraction_digits {
-        if max < config.minimum_fraction_digits {
-            return Err(());
+    // Validation: only when the caller explicitly provided both bounds and the
+    // maximum is below the minimum (§2.1). An unset maximum never conflicts —
+    // it is resolved via `max(min, default)` below.
+    if config.maximum_fraction_digits_set && minimum_fraction_digits_set {
+        if let Some(max) = config.maximum_fraction_digits {
+            if max < config.minimum_fraction_digits {
+                return Err(());
+            }
         }
     }
+
+    // Resolve the effective maximum when the caller gave none. Mirrors
+    // ECMA-402 `SetNumberFormatDigitOptions`: `mxfd = max(mnfd, mxfdDefault)`,
+    // where the default is 3 for decimal style and 0 for percent. This is what
+    // standard/percent rounding in `apply_config` uses, and what the compact
+    // resolution below reads — a min-only request keeps its real digits
+    // (`minimum_fraction_digits: 5` shows 5 digits, not 3 rounded + 2 zeros).
+    if !config.maximum_fraction_digits_set {
+        let default_max: u16 = match config.style {
+            Style::Decimal => 3,
+            Style::Percent => 0,
+        };
+        config.maximum_fraction_digits = Some(config.minimum_fraction_digits.max(default_max));
+    }
+
+    // Resolve the compact-significand precision once (§2.1): neither bound
+    // given ⇒ significant-digit default; otherwise the fixed fraction-digit
+    // range resolved above, with an explicit `:unbounded` meaning no maximum.
+    config.compact_precision =
+        if !config.maximum_fraction_digits_set && !minimum_fraction_digits_set {
+            CompactPrecision::SignificantDefault
+        } else {
+            CompactPrecision::Fixed {
+                min: config.minimum_fraction_digits,
+                max: config.maximum_fraction_digits,
+            }
+        };
 
     Ok(config)
 }
@@ -608,7 +677,12 @@ fn try_decode_decimal_struct<'a>(term: Term<'a>) -> Option<FixedDecimal> {
 fn apply_config(decimal: &mut FixedDecimal, config: &FormatterConfig) {
     if let Some(max_fraction_digits) = config.maximum_fraction_digits {
         if let Ok(position) = i16::try_from(max_fraction_digits) {
-            decimal.round(-position);
+            // Honour the rounding direction (§2.3): trunc floors toward zero,
+            // half-even rounds to nearest. Shared with percent style.
+            match config.rounding_mode {
+                RoundingMode::Trunc => decimal.trunc(-position),
+                RoundingMode::HalfEven => decimal.round(-position),
+            }
         }
     }
 
@@ -642,5 +716,80 @@ fn part_atom(part: WriteablePart) -> Option<Atom> {
         Some(atoms::minus_sign())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use icu::locale::Locale;
+
+    fn compact_formatter(tag: &str) -> CompactDecimalFormatter {
+        let locale: Locale = tag.parse().unwrap();
+        CompactDecimalFormatter::try_new_short(locale.into(), Default::default()).unwrap()
+    }
+
+    /// The `SignificantDefault` precision must reproduce ICU4X's own
+    /// `format_fixed_decimal` for every value whose abbreviated significand is
+    /// ≥ 1 (i.e. every value ≥ 1). Sub-1 significands intentionally diverge
+    /// (they keep 2 significant digits, Intl-style) and are excluded here. This
+    /// pins the significand rule now that we no longer delegate to
+    /// `format_fixed_decimal`.
+    #[test]
+    fn significant_default_matches_format_fixed_decimal() {
+        let values = [
+            "0",
+            "1",
+            "999",
+            "1000",
+            "1050",
+            "1650",
+            "1750",
+            "1950",
+            "6718",
+            "6780",
+            "9999",
+            "12000",
+            "15000",
+            "15400",
+            "194438",
+            "999499",
+            "999500",
+            "999999",
+            "1000000",
+            "9999500",
+            "1172700",
+            "-1172700",
+            "9223372036854775807",
+        ];
+        let config = FormatterConfig::default(); // SignificantDefault, half-even.
+        for tag in ["en", "ja", "ru", "hi", "de"] {
+            let formatter = compact_formatter(tag);
+            for v in values {
+                let value = FixedDecimal::try_from_str(v).unwrap();
+                let expected = formatter.format_fixed_decimal(&value).to_string();
+                let (actual, _) = format_compact(&formatter, &value, &config).unwrap();
+                assert_eq!(
+                    actual, expected,
+                    "locale {tag}, value {v}: SignificantDefault != format_fixed_decimal"
+                );
+            }
+        }
+    }
+
+    /// Half-even carries across a magnitude boundary must be absorbed by the
+    /// carry loop, never surfaced as a `format_compact_decimal` error (§2.2).
+    #[test]
+    fn half_even_boundary_carry_resolves() {
+        let formatter = compact_formatter("en");
+        let mut config = FormatterConfig::default();
+        config.compact_precision = CompactPrecision::Fixed {
+            min: 0,
+            max: Some(1),
+        };
+        let value = FixedDecimal::try_from_str("999950").unwrap();
+        let (formatted, displayed) = format_compact(&formatter, &value, &config).unwrap();
+        assert_eq!(formatted, "1M");
+        assert_eq!(displayed, "1000000");
     }
 }
