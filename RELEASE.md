@@ -2,80 +2,49 @@
 
 Because we use
 [`RustlerPrecompiled`](https://hexdocs.pm/rustler_precompiled/RustlerPrecompiled.html),
-releasing is a bit more involved than it would be otherwise.
+releasing involves building NIFs on CI and checksumming the resulting
+artifacts. Most of the process is automated by
+[`scripts/release.sh`](scripts/release.sh).
 
-1. Pick the new release `version`.
+## Prerequisites
 
-    * We follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-    * Should be the current version in `mix.exs` with `-dev` removed.
+* `gh` CLI, authenticated (`gh auth status`).
+* hex.pm authentication (`mix hex.user whoami`).
+* A clean working tree checked out at the latest `main`.
 
-2. Begin drafting a new release.
+## Steps
 
-CLI:
-```
-gh release create v{version} --target main --generate-notes --draft
-```
+1. Run `scripts/release.sh prepare [version]`.
 
-UI:
-    1. Go to https://github.com/hansihe/icu_ex/releases.
-    2. Click "Draft a new release".
-    3. Under "Select tag", set the tag to `v{version}`, e.g. `v0.11.0`.
-    4. Keep the target branch as `main`.
-    5. Click "Generate release notes".
-    6. Stop here. Wait until later to actually publish the release.
+    * `version` defaults to the version in `mix.exs` with `-dev` removed.
+      We follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+    * This creates a draft GitHub release with generated notes, seeds
+      `CHANGELOG.md` from them, bumps the version in `mix.exs` and
+      `README.md`, and opens a release PR.
+    * The script pauses after seeding `CHANGELOG.md` — edit the raw notes
+      into [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) form
+      before continuing.
 
-3. Open a PR with any changes needed for the release. Must include:
+2. Review and merge the release PR.
 
-    * Updating the `version` in `mix.exs`
-    * Updating the `version` in any other files that reference it, like
-        * `README.md` (multiple places)
-    * Updating the `CHANGELOG.md` to reflect the release
-        * Use the generated release notes from earlier as a starting point.
-        * Edit the entries to follow the format from
-          https://keepachangelog.com/en/1.1.0/.
+3. Update your local `main` (`jj git fetch && jj new main`), then run
+   `scripts/release.sh publish <version>`.
 
-4. Merge the PR.
+    * This publishes the GitHub release, which creates the tag and kicks off
+      the "Precomp NIFs" workflow. The script waits for it to complete
+      (usually 40–60 minutes), so feel free to walk away.
+    * It then downloads the artifacts, generates the checksums, and appends
+      them to the release notes.
+    * Finally it runs `mix hex.publish --yes` and pushes a commit to `main`
+      bumping `mix.exs` to the next patch version with a `-dev` suffix
+      (e.g. `0.11.0` → `0.11.1-dev`).
 
-5. On the release draft page, click "Publish release".
+Both commands are resumable: if something fails partway, fix the issue and
+rerun the same command — completed steps are detected and skipped.
 
-CLI:
-```
-gh release edit v{version} --draft=false
-```
+## Manual fallback
 
-6. Publishing the release will kick off the "Build precompiled NIFs" GitHub
-   Action. Wait for this to complete.
-
-    * It usually takes around 40-60 minutes.
-
-7. Generate the artifact checksums.
-
-    1. Go to your local version of Icu.
-    2. Ensure you have the latest version of `main` (post PR merge).
-    3. Remove any intermediate builds by running:
-        ```
-        rm -rf target
-        ```
-    4. Download all the artifacts and generate the checksums:
-        ```
-        ICU_BUILD=true mix rustler_precompiled.download Icu.Nif --all --print
-        ```
-
-8. Paste the checksums into the release description on GitHub.
-
-    1. Go to the release published earlier at the top of
-       https://github.com/hansihe/icu_ex/releases.
-    2. Click the "Edit" pencil icon.
-    3. At the bottom, paste the SHA256 contents under the heading "SHA256 of the
-       artifacts" (ensure the contents are formatted to look like code).
-
-9. Run `mix hex.publish`.
-
-    1. Double check the dependencies and files.
-    2. Enter "Y" to confirm.
-    3. Discard the auto-generated `.exs` file beginning with `checksum`.
-
-10. Bump the version in the `mix.exs` and add the `-dev` flag to the end.
-
-    * Example: `0.11.0` to `0.11.1-dev`.
-    * Can either open up a PR or push directly to `main`.
+If the script is unusable for some reason, it is a faithful encoding of the
+manual process; follow its steps by hand in order. The pre-automation
+version of this document (with full manual instructions) is available in
+git history.
