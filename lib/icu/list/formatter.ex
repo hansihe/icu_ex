@@ -34,8 +34,6 @@ defmodule Icu.List.Formatter do
     end
   end
 
-  def format(%__MODULE__{}, _other), do: {:error, :invalid_items}
-
   @spec format!(t(), Enumerable.t()) :: String.t()
   def format!(%__MODULE__{} = formatter, values) do
     case format(formatter, values) do
@@ -51,8 +49,6 @@ defmodule Icu.List.Formatter do
       Nif.list_format_to_parts(resource, items)
     end
   end
-
-  def format_to_parts(%__MODULE__{}, _other), do: {:error, :invalid_items}
 
   @spec format_to_parts!(t(), Enumerable.t()) :: [map()]
   def format_to_parts!(%__MODULE__{} = formatter, values) do
